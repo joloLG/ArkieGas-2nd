@@ -14,7 +14,7 @@ export default function Footer() {
             rel="noopener noreferrer"
             className="text-blue-400 font-medium hover:text-blue-300 transition-colors duration-200 underline"
           >
-            JLG-DEV Solutions
+            JOLO GRACILLA
           </Link>
         </p>
         <p className="text-xs text-gray-500 mt-2">

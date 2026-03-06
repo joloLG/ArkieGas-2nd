@@ -145,6 +145,22 @@ export default function Sidebar() {
                 </div>
               </div>
             </div>
+            
+            {/* Copyright */}
+            <div className="mb-4 text-center">
+              <p className="text-xs text-gray-500 mb-1">
+                © 2026 Arkie Gasul
+              </p>
+              <Link
+                href="https://jlgdev.vercel.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-400 hover:text-blue-300 transition-colors duration-200 underline font-medium"
+              >
+                Developed by JOLO GRACILLA
+              </Link>
+            </div>
+            
             <button
               onClick={handleLogout}
               className="flex items-center w-full px-4 py-3 text-sm font-medium text-gray-300 rounded-xl hover:bg-red-600/20 hover:text-red-400 transition-all duration-200 group"

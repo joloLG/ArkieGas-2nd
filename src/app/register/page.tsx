@@ -330,6 +330,23 @@ export default function RegisterPage() {
                 </Link>
               </span>
             </div>
+
+            <div className="text-center pt-4 border-t border-gray-200 mt-6">
+              <p className="text-xs text-gray-500">
+                © 2026 Arkie Gasul - Developed by{' '}
+                <Link
+                  href="https://jlgdev.vercel.app/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-600 transition-colors duration-200 underline font-medium"
+                >
+                  JOLO GRACILLA
+                </Link>
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                All rights reserved.
+              </p>
+            </div>
           </form>
         </div>
       </div>
