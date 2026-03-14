@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { FiPlus, FiEdit2, FiPackage, FiAlertTriangle, FiEdit, FiRefreshCw } from 'react-icons/fi'
 import { supabase } from '@/lib/supabase'
+import { InventoryAlertManager } from '@/components/InventoryAlertManager'
 
 interface Product {
   id: string
@@ -223,15 +224,30 @@ export default function InventoryPage() {
             <p className="text-blue-100 text-lg">Track product stocks and empty tank returns</p>
           </div>
           
-          <button
-            onClick={() => setShowEmptyTankModal(true)}
-            className="bg-white text-blue-600 px-6 py-3 rounded-xl hover:bg-blue-50 flex items-center transition-all duration-200 transform hover:scale-105 shadow-lg hover:shadow-xl font-semibold"
-          >
-            <FiPlus className="w-5 h-5 mr-2" />
-            Record Empty Tank
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => setShowEmptyTankModal(true)}
+              className="bg-white/20 backdrop-blur-sm hover:bg-white/30 border border-white/30 text-white px-6 py-3 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2"
+            >
+              <FiPackage className="text-xl" />
+              Empty Tank Returns
+            </button>
+            <Link
+              href="/dashboard/inventory/add-product"
+              className="bg-white text-blue-600 hover:bg-blue-50 px-6 py-3 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2"
+            >
+              <FiPlus className="text-xl" />
+              Add Product
+            </Link>
+          </div>
         </div>
       </div>
+
+      {/* Email Alert Manager */}
+      <InventoryAlertManager 
+        products={products} 
+        userEmail={process.env.NEXT_PUBLIC_USER_EMAIL || 'jlgracilla53@gmail.com'} 
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -406,8 +422,8 @@ export default function InventoryPage() {
                   <input
                     type="number"
                     required
-                    value={stockValue}
-                    onChange={(e) => setStockValue(parseInt(e.target.value))}
+                    value={stockValue || ''}
+                    onChange={(e) => setStockValue(e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
                     className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-black placeholder-gray-500"
                     placeholder="Enter new stock value"
                   />

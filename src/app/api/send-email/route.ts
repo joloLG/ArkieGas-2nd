@@ -1,33 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Resend } from 'resend'
-
-const resend = new Resend(process.env.RESEND_API_KEY)
+import { sendLowStockEmail } from '@/lib/email'
 
 export async function POST(request: NextRequest) {
   try {
-    const { productName, currentStock, minAlert } = await request.json()
+    const { productName, currentStock, minAlert, userEmail } = await request.json()
 
-    const { data, error } = await resend.emails.send({
-      from: 'Arkie Gasul <noreply@arkiegasul.com>',
-      to: ['user@example.com'], // Replace with actual user email
-      subject: 'Low Stock Alert',
-      html: `
-        <h2>Low Stock Alert</h2>
-        <p>Product: ${productName}</p>
-        <p>Current Stock: ${currentStock}</p>
-        <p>Minimum Alert: ${minAlert}</p>
-        <p>Please restock soon.</p>
-      `,
-    })
+    // Use provided user email or fallback to environment variable
+    const toEmail = userEmail || process.env.DEFAULT_USER_EMAIL
 
-    if (error) {
-      console.error('Error sending email:', error)
-      return NextResponse.json({ error: 'Failed to send email' }, { status: 500 })
+    if (!toEmail) {
+      return NextResponse.json({ 
+        error: 'No recipient email provided. Please set userEmail in request or DEFAULT_USER_EMAIL in environment.' 
+      }, { status: 400 })
     }
 
-    return NextResponse.json({ success: true })
+    await sendLowStockEmail(toEmail, productName, currentStock, minAlert)
+
+    return NextResponse.json({ success: true, message: 'Low stock email sent successfully' })
   } catch (error) {
     console.error('Error in send-email API:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ 
+      error: 'Failed to send email',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 })
   }
 }

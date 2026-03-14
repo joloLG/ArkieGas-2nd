@@ -64,8 +64,8 @@ export default function Sidebar() {
           {/* Logo */}
           <div className="flex items-center justify-between h-16 px-6 border-b border-gray-700 bg-gray-900/50 backdrop-blur-sm">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-                <span className="text-white font-bold text-lg">A</span>
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg overflow-hidden">
+                <img src="/images/logo.png" alt="Arkie Gasul Logo" className="w-full h-full object-cover" />
               </div>
               <div className="ml-3">
                 <span className="text-lg font-bold text-white">Arkie</span>

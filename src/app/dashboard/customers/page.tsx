@@ -6,7 +6,10 @@ import {
   FiCreditCard,
   FiPackage,
   FiSearch,
-  FiX
+  FiX,
+  FiTrendingUp,
+  FiCalendar,
+  FiDollarSign
 } from 'react-icons/fi'
 import { supabase } from '@/lib/supabase'
 
@@ -44,6 +47,8 @@ export default function CustomersPage() {
   const [paymentModal, setPaymentModal] = useState<{ loan: Loan | null; amount: number }>({ loan: null, amount: 0 })
   const [returnModal, setReturnModal] = useState<{ tank: UnreturnedTank | null; quantity: number }>({ tank: null, quantity: 0 })
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerData | null>(null)
+  const [detailsModal, setDetailsModal] = useState(false)
 
   // Filter customers based on search query
   const filteredCustomers = customers.filter(customer => 
@@ -91,7 +96,19 @@ export default function CustomersPage() {
         customerMap.get(tank.customer_name)!.unreturnedTanks.push(tank)
       })
 
-      setCustomers(Array.from(customerMap.values()))
+      // Convert to array and sort: customers with loans first, then alphabetically
+      const customersArray = Array.from(customerMap.values())
+      customersArray.sort((a, b) => {
+        const aHasActiveLoan = a.loans.some(loan => loan.loan_amount > loan.paid_amount)
+        const bHasActiveLoan = b.loans.some(loan => loan.loan_amount > loan.paid_amount)
+        
+        if (aHasActiveLoan && !bHasActiveLoan) return -1
+        if (!aHasActiveLoan && bHasActiveLoan) return 1
+        
+        return a.name.localeCompare(b.name)
+      })
+
+      setCustomers(customersArray)
     } catch (error) {
       console.error('Error fetching customers:', error)
     } finally {
@@ -214,6 +231,23 @@ export default function CustomersPage() {
     }
   }
 
+  const openCustomerDetails = (customer: CustomerData) => {
+    setSelectedCustomer(customer)
+    setDetailsModal(true)
+  }
+
+  const hasActiveLoans = (customer: CustomerData) => {
+    return customer.loans.some(loan => loan.loan_amount > loan.paid_amount)
+  }
+
+  const hasUnreturnedTanks = (customer: CustomerData) => {
+    return customer.unreturnedTanks.length > 0
+  }
+
+  const needsHighlight = (customer: CustomerData) => {
+    return hasActiveLoans(customer) || hasUnreturnedTanks(customer)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -232,7 +266,7 @@ export default function CustomersPage() {
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
           <div className="mb-6 lg:mb-0">
             <h1 className="text-3xl font-bold mb-2">Customer Management</h1>
-            <p className="text-purple-100 text-lg">Manage customers with active loans and unreturned tanks</p>
+            <p className="text-purple-100 text-lg">Click on any customer to view their detailed loan and tank information</p>
           </div>
           
           {/* Search Bar */}
@@ -306,194 +340,286 @@ export default function CustomersPage() {
           </div>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredCustomers.map((customer) => (
-            <div key={customer.name} className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-all duration-300">
-              {/* Customer Header */}
-              <div className="bg-gradient-to-r from-purple-50 to-indigo-50 px-6 py-4 border-b border-gray-100">
-                <div className="flex items-center justify-between">
+            <button
+              key={customer.name}
+              onClick={() => openCustomerDetails(customer)}
+              className={`p-6 rounded-xl border-2 transition-all duration-300 hover:shadow-xl hover:scale-105 text-left ${
+                needsHighlight(customer)
+                  ? 'bg-red-50 border-red-300 hover:border-red-400'
+                  : 'bg-white border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center mb-3">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                  needsHighlight(customer)
+                    ? 'bg-red-500 text-white'
+                    : 'bg-gradient-to-br from-purple-500 to-indigo-600 text-white'
+                }`}>
+                  <FiUser className="w-6 h-6" />
+                </div>
+                <div className="ml-3 flex-1">
+                  <h3 className={`font-bold text-lg ${
+                    needsHighlight(customer) ? 'text-red-900' : 'text-gray-900'
+                  }`}>
+                    {customer.name}
+                  </h3>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                {hasActiveLoans(customer) && (
+                  <div className="flex items-center text-sm">
+                    <FiCreditCard className={`w-4 h-4 mr-2 ${needsHighlight(customer) ? 'text-red-600' : 'text-blue-600'}`} />
+                    <span className={needsHighlight(customer) ? 'text-red-700 font-medium' : 'text-gray-700'}>
+                      {customer.loans.filter(loan => loan.loan_amount > loan.paid_amount).length} active loan(s)
+                    </span>
+                  </div>
+                )}
+                
+                {hasUnreturnedTanks(customer) && (
+                  <div className="flex items-center text-sm">
+                    <FiPackage className={`w-4 h-4 mr-2 ${needsHighlight(customer) ? 'text-red-600' : 'text-orange-600'}`} />
+                    <span className={needsHighlight(customer) ? 'text-red-700 font-medium' : 'text-gray-700'}>
+                      {customer.unreturnedTanks.reduce((sum, t) => sum + t.quantity, 0)} tank(s) pending
+                    </span>
+                  </div>
+                )}
+              </div>
+              
+              {needsHighlight(customer) && (
+                <div className="mt-3 pt-3 border-t border-red-200">
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                    Requires Attention
+                  </span>
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Customer Details Modal */}
+      {detailsModal && selectedCustomer && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto transform transition-all duration-300 scale-100">
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-4 rounded-t-2xl sticky top-0 z-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold text-white">{selectedCustomer.name}</h3>
+                  <p className="text-purple-100 text-sm mt-1">Customer Details and Activity</p>
+                </div>
+                <button
+                  onClick={() => setDetailsModal(false)}
+                  className="text-white hover:text-purple-200 transition-colors duration-200"
+                >
+                  <FiX className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* Summary Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                   <div className="flex items-center">
-                    <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-                      <FiUser className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="ml-4">
-                      <h2 className="text-xl font-bold text-gray-900">{customer.name}</h2>
-                      <p className="text-sm text-gray-600">
-                        {customer.loans.filter((loan: Loan) => loan.loan_amount > loan.paid_amount).length} active loans • 
-                        {customer.unreturnedTanks.reduce((sum: number, t: UnreturnedTank) => sum + t.quantity, 0)} unreturned tanks
+                    <FiCreditCard className="w-8 h-8 text-blue-600 mr-3" />
+                    <div>
+                      <p className="text-sm text-blue-600 font-medium">Total Loans</p>
+                      <p className="text-2xl font-bold text-blue-900">{selectedCustomer.loans.length}</p>
+                      <p className="text-xs text-blue-700">
+                        {selectedCustomer.loans.filter(loan => loan.loan_amount > loan.paid_amount).length} active
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    {customer.loans.filter((loan: Loan) => loan.loan_amount > loan.paid_amount).length > 0 && (
-                      <span className="px-3 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full">
-                        Active Loans
-                      </span>
-                    )}
-                    {customer.unreturnedTanks.length > 0 && (
-                      <span className="px-3 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded-full">
-                        Tanks Pending
-                      </span>
-                    )}
+                </div>
+                
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                  <div className="flex items-center">
+                    <FiPackage className="w-8 h-8 text-orange-600 mr-3" />
+                    <div>
+                      <p className="text-sm text-orange-600 font-medium">Unreturned Tanks</p>
+                      <p className="text-2xl font-bold text-orange-900">
+                        {selectedCustomer.unreturnedTanks.reduce((sum, t) => sum + t.quantity, 0)}
+                      </p>
+                      <p className="text-xs text-orange-700">
+                        {selectedCustomer.unreturnedTanks.length} product types
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <div className="flex items-center">
+                    <FiDollarSign className="w-8 h-8 text-green-600 mr-3" />
+                    <div>
+                      <p className="text-sm text-green-600 font-medium">Total Remaining</p>
+                      <p className="text-2xl font-bold text-green-900">
+                        ₱{selectedCustomer.loans
+                          .filter(loan => loan.loan_amount > loan.paid_amount)
+                          .reduce((sum, loan) => sum + (loan.loan_amount - loan.paid_amount), 0)
+                          .toLocaleString()}
+                      </p>
+                      <p className="text-xs text-green-700">Outstanding balance</p>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="p-6">
-                {/* Loans Section */}
-                {customer.loans.length > 0 && (
-                  <div className="mb-8">
-                    <div className="flex items-center mb-4">
-                      <div className="p-2 bg-blue-100 rounded-lg mr-3">
-                        <FiCreditCard className="w-5 h-5 text-blue-600" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-gray-900">Loan History</h3>
-                        <p className="text-sm text-gray-600">
-                          {customer.loans.filter(loan => loan.loan_amount > loan.paid_amount).length} active, 
-                          {customer.loans.filter(loan => loan.loan_amount <= loan.paid_amount).length} paid
-                        </p>
-                      </div>
+              {/* Loans Section */}
+              {selectedCustomer.loans.length > 0 && (
+                <div>
+                  <div className="flex items-center mb-4">
+                    <div className="p-2 bg-blue-100 rounded-lg mr-3">
+                      <FiCreditCard className="w-5 h-5 text-blue-600" />
                     </div>
-                    
-                    <div className="grid gap-4">
-                      {customer.loans.map((loan) => {
-                        const remainingAmount = loan.loan_amount - loan.paid_amount
-                        const isPaidOff = remainingAmount <= 0
-                        const progressPercentage = (loan.paid_amount / loan.loan_amount) * 100
-                        
-                        return (
-                          <div key={loan.id} className={`border rounded-xl p-5 transition-all duration-200 ${
-                            isPaidOff 
-                              ? 'border-green-200 bg-gradient-to-r from-green-50 to-emerald-50' 
-                              : 'border-gray-200 bg-white hover:shadow-md'
-                          }`}>
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <div className="flex items-center mb-3">
-                                  <p className="font-semibold text-gray-900 text-lg">{loan.products?.name || 'Unknown Product'}</p>
-                                  {isPaidOff && (
-                                    <span className="ml-3 px-3 py-1 text-xs font-semibold text-green-700 bg-green-100 rounded-full">
-                                      ✓ PAID
-                                    </span>
-                                  )}
-                                </div>
-                                
-                                {/* Progress Bar */}
-                                <div className="mb-4">
-                                  <div className="flex justify-between items-center mb-2">
-                                    <span className="text-sm text-gray-600">Payment Progress</span>
-                                    <span className="text-sm font-medium text-gray-900">{progressPercentage.toFixed(1)}%</span>
-                                  </div>
-                                  <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div 
-                                      className={`h-2 rounded-full transition-all duration-500 ${
-                                        isPaidOff ? 'bg-green-500' : 'bg-blue-500'
-                                      }`}
-                                      style={{ width: `${Math.min(progressPercentage, 100)}%` }}
-                                    ></div>
-                                  </div>
-                                </div>
-                                
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                  <div>
-                                    <p className="text-xs text-gray-500 mb-1">Selling Price</p>
-                                    <p className="text-sm font-semibold text-gray-900">₱{loan.selling_price.toLocaleString()}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-gray-500 mb-1">Loan Amount</p>
-                                    <p className="text-sm font-semibold text-gray-900">₱{loan.loan_amount.toLocaleString()}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-gray-500 mb-1">Paid Amount</p>
-                                    <p className="text-sm font-semibold text-green-600">₱{loan.paid_amount.toLocaleString()}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-gray-500 mb-1">Remaining</p>
-                                    <p className={`text-sm font-bold ${isPaidOff ? 'text-green-600' : 'text-red-600'}`}>
-                                      ₱{remainingAmount.toLocaleString()}
-                                    </p>
-                                  </div>
-                                </div>
-                                
-                                <p className="text-xs text-gray-500 mt-3">
-                                  Loan Date: {new Date(loan.date).toLocaleDateString()}
-                                </p>
-                              </div>
-                              
-                              {!isPaidOff && (
-                                <button
-                                  onClick={() => setPaymentModal({ loan, amount: 0 })}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 transform hover:scale-105 shadow-md hover:shadow-lg ml-4"
-                                >
-                                  Record Payment
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">Loan History</h3>
+                      <p className="text-sm text-gray-600">
+                        {selectedCustomer.loans.filter(loan => loan.loan_amount > loan.paid_amount).length} active, 
+                        {selectedCustomer.loans.filter(loan => loan.loan_amount <= loan.paid_amount).length} paid
+                      </p>
                     </div>
                   </div>
-                )}
-
-                {/* Unreturned Tanks Section */}
-                {customer.unreturnedTanks.length > 0 && (
-                  <div>
-                    <div className="flex items-center mb-4">
-                      <div className="p-2 bg-orange-100 rounded-lg mr-3">
-                        <FiPackage className="w-5 h-5 text-orange-600" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-gray-900">Unreturned Empty Tanks</h3>
-                        <p className="text-sm text-gray-600">
-                          {customer.unreturnedTanks.reduce((sum: number, t: UnreturnedTank) => sum + t.quantity, 0)} tanks to be returned
-                        </p>
-                      </div>
-                    </div>
-                    
-                    <div className="grid gap-4">
-                      {customer.unreturnedTanks.map((tank: UnreturnedTank) => (
-                        <div key={tank.id} className="border border-gray-200 rounded-xl p-5 bg-white hover:shadow-md transition-all duration-200">
+                  
+                  <div className="space-y-4">
+                    {selectedCustomer.loans.map((loan) => {
+                      const remainingAmount = loan.loan_amount - loan.paid_amount
+                      const isPaidOff = remainingAmount <= 0
+                      const progressPercentage = (loan.paid_amount / loan.loan_amount) * 100
+                      
+                      return (
+                        <div key={loan.id} className={`border rounded-xl p-5 transition-all duration-200 ${
+                          isPaidOff 
+                            ? 'border-green-200 bg-gradient-to-r from-green-50 to-emerald-50' 
+                            : 'border-gray-200 bg-white hover:shadow-md'
+                        }`}>
                           <div className="flex justify-between items-start">
                             <div className="flex-1">
                               <div className="flex items-center mb-3">
-                                <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center mr-3">
-                                  <FiPackage className="w-5 h-5 text-orange-600" />
+                                <p className="font-semibold text-gray-900 text-lg">{loan.products?.name || 'Unknown Product'}</p>
+                                {isPaidOff && (
+                                  <span className="ml-3 px-3 py-1 text-xs font-semibold text-green-700 bg-green-100 rounded-full">
+                                    ✓ PAID
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {/* Progress Bar */}
+                              <div className="mb-4">
+                                <div className="flex justify-between items-center mb-2">
+                                  <span className="text-sm text-gray-600">Payment Progress</span>
+                                  <span className="text-sm font-medium text-gray-900">{progressPercentage.toFixed(1)}%</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                  <div 
+                                    className={`h-2 rounded-full transition-all duration-500 ${
+                                      isPaidOff ? 'bg-green-500' : 'bg-blue-500'
+                                    }`}
+                                    style={{ width: `${Math.min(progressPercentage, 100)}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                              
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div>
+                                  <p className="text-xs text-gray-500 mb-1">Selling Price</p>
+                                  <p className="text-sm font-semibold text-gray-900">₱{loan.selling_price.toLocaleString()}</p>
                                 </div>
                                 <div>
-                                  <p className="font-semibold text-gray-900 text-lg">{tank.products?.name || 'Unknown Product'}</p>
-                                  <p className="text-sm text-gray-600">Quantity: {tank.quantity}</p>
+                                  <p className="text-xs text-gray-500 mb-1">Loan Amount</p>
+                                  <p className="text-sm font-semibold text-gray-900">₱{loan.loan_amount.toLocaleString()}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500 mb-1">Paid Amount</p>
+                                  <p className="text-sm font-semibold text-green-600">₱{loan.paid_amount.toLocaleString()}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500 mb-1">Remaining</p>
+                                  <p className={`text-sm font-bold ${isPaidOff ? 'text-green-600' : 'text-red-600'}`}>
+                                    ₱{remainingAmount.toLocaleString()}
+                                  </p>
                                 </div>
                               </div>
                               
-                              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-3">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm font-medium text-orange-800">Pending Return</span>
-                                  <span className="text-lg font-bold text-orange-900">{tank.quantity} tanks</span>
-                                </div>
-                              </div>
-                              
-                              <p className="text-xs text-gray-500">
-                                Transaction Date: {new Date(tank.date).toLocaleDateString()}
+                              <p className="text-xs text-gray-500 mt-3">
+                                Loan Date: {new Date(loan.date).toLocaleDateString()}
                               </p>
                             </div>
                             
-                            <button
-                              onClick={() => setReturnModal({ tank, quantity: 0 })}
-                              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 transform hover:scale-105 shadow-md hover:shadow-lg ml-4"
-                            >
-                              Record Return
-                            </button>
+                            {!isPaidOff && (
+                              <button
+                                onClick={() => setPaymentModal({ loan, amount: 0 })}
+                                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 transform hover:scale-105 shadow-md hover:shadow-lg ml-4"
+                              >
+                                Record Payment
+                              </button>
+                            )}
                           </div>
                         </div>
-                      ))}
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Unreturned Tanks Section */}
+              {selectedCustomer.unreturnedTanks.length > 0 && (
+                <div>
+                  <div className="flex items-center mb-4">
+                    <div className="p-2 bg-orange-100 rounded-lg mr-3">
+                      <FiPackage className="w-5 h-5 text-orange-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">Unreturned Empty Tanks</h3>
+                      <p className="text-sm text-gray-600">
+                        {selectedCustomer.unreturnedTanks.reduce((sum, t) => sum + t.quantity, 0)} tanks to be returned
+                      </p>
                     </div>
                   </div>
-                )}
-              </div>
+                  
+                  <div className="space-y-4">
+                    {selectedCustomer.unreturnedTanks.map((tank) => (
+                      <div key={tank.id} className="border border-gray-200 rounded-xl p-5 bg-white hover:shadow-md transition-all duration-200">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <div className="flex items-center mb-3">
+                              <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center mr-3">
+                                <FiPackage className="w-5 h-5 text-orange-600" />
+                              </div>
+                              <div>
+                                <p className="font-semibold text-gray-900 text-lg">{tank.products?.name || 'Unknown Product'}</p>
+                                <p className="text-sm text-gray-600">Quantity: {tank.quantity}</p>
+                              </div>
+                            </div>
+                            
+                            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm font-medium text-orange-800">Pending Return</span>
+                                <span className="text-lg font-bold text-orange-900">{tank.quantity} tanks</span>
+                              </div>
+                            </div>
+                            
+                            <p className="text-xs text-gray-500">
+                              Transaction Date: {new Date(tank.date).toLocaleDateString()}
+                            </p>
+                          </div>
+                          
+                          <button
+                            onClick={() => setReturnModal({ tank, quantity: 0 })}
+                            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 transform hover:scale-105 shadow-md hover:shadow-lg ml-4"
+                          >
+                            Record Return
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          ))}
+          </div>
         </div>
       )}
 
