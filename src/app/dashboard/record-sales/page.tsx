@@ -12,6 +12,16 @@ interface Product {
   image_url?: string
 }
 
+interface BulkTransactionResult {
+  success: boolean
+  message: string
+  transaction_id: string | null
+  customer_name: string
+  product_name: string
+  stock_before: number | null
+  stock_after: number | null
+}
+
 interface CustomerBulkSale {
   id: string
   customer_name: string
@@ -113,117 +123,42 @@ export default function RecordSalesPage() {
         payment_value = formData.selling_price * formData.quantity
       }
 
-      // Create transaction record using the new standardized function
-      // This automatically handles profit tracking and loan creation
-      const { data: transactionData, error: transactionError } = await supabase
-        .rpc('create_transaction_v2', {
-          p_transaction_type: 'sale',
-          p_reference_id: null,
+      // Create transaction record using unified function
+      // This automatically handles profit tracking, loan creation, and inventory deduction
+      const { data: result, error: inventoryError } = await supabase
+        .rpc('create_sale_transaction', {
           p_customer_name: formData.customer_name,
           p_product_id: selectedProduct.id,
           p_quantity: formData.quantity,
           p_selling_price: formData.selling_price,
           p_base_price: selectedProduct.base_price,
           p_payment_method: formData.payment_method,
-          p_payment_value: payment_value
+          p_payment_value: payment_value,
+          p_returned_empty: formData.returned_empty === 'yes',
+          p_empty_quantity_not_returned: formData.empty_quantity_not_returned
         })
 
-      if (transactionError) throw transactionError
-
-      // Get the transaction details to check if loan was created
-      const { data: transactionDetails, error: detailsError } = await supabase
-        .from('transactions')
-        .select('reference_id, remaining_balance, excess_payment')
-        .eq('id', transactionData)
-        .single()
-
-      if (detailsError) throw detailsError
-
-      // Update product stocks
-      const { error: stockError } = await supabase
-        .from('products')
-        .update({ stocks: selectedProduct.stocks - formData.quantity })
-        .eq('id', selectedProduct.id)
-
-      if (stockError) throw stockError
-
-      // Handle empty tank returns
-      if (formData.returned_empty === 'yes') {
-        // Customer returned empty tanks - update stocks back with returned quantity
-        const returnedQuantity = formData.empty_quantity_not_returned || 0
-        const { error: returnError } = await supabase
-          .from('products')
-          .update({ stocks: (selectedProduct.stocks - formData.quantity) + returnedQuantity })
-          .eq('id', selectedProduct.id)
-
-        if (returnError) throw returnError
-        
-        // Remove from unreturned tanks if exists
-        const { data: unreturned } = await supabase
-          .from('empty_tanks_unreturned')
-          .select('*')
-          .eq('customer_name', formData.customer_name)
-          .eq('product_id', selectedProduct.id)
-
-        if (unreturned && unreturned.length > 0) {
-          const current = unreturned[0].quantity
-          if (current <= returnedQuantity) {
-            // Remove all unreturned tanks
-            await supabase
-              .from('empty_tanks_unreturned')
-              .delete()
-              .eq('customer_name', formData.customer_name)
-              .eq('product_id', selectedProduct.id)
-          } else {
-            // Reduce unreturned tanks
-            await supabase
-              .from('empty_tanks_unreturned')
-              .update({ quantity: current - returnedQuantity })
-              .eq('customer_name', formData.customer_name)
-              .eq('product_id', selectedProduct.id)
-          }
+      if (inventoryError) {
+        if (inventoryError.message.includes('Not enough stock')) {
+          alert(inventoryError.message)
+          return
         }
-      } else if (formData.returned_empty === 'no' && formData.empty_quantity_not_returned > 0) {
-        // Store not returned tank information - check if record exists first
-        const { data: existingUnreturned } = await supabase
-          .from('empty_tanks_unreturned')
-          .select('*')
-          .eq('customer_name', formData.customer_name)
-          .eq('product_id', selectedProduct.id)
-          .single()
-
-        if (existingUnreturned) {
-          // Update existing record
-          const { error: updateError } = await supabase
-            .from('empty_tanks_unreturned')
-            .update({ 
-              quantity: existingUnreturned.quantity + formData.empty_quantity_not_returned,
-              date: new Date().toISOString()
-            })
-            .eq('id', existingUnreturned.id)
-
-          if (updateError) throw updateError
-        } else {
-          // Insert new record
-          const { error: insertError } = await supabase
-            .from('empty_tanks_unreturned')
-            .insert({
-              customer_name: formData.customer_name,
-              product_id: selectedProduct.id,
-              quantity: formData.empty_quantity_not_returned,
-              date: new Date().toISOString()
-            })
-
-          if (insertError) throw insertError
-        }
+        throw inventoryError
       }
 
-      // Record incoming payment if there's a payment_value (for cash and partial loan payments)
+      if (!result || result.length === 0 || !result[0].success) {
+        throw new Error(result?.[0]?.message || 'Transaction failed')
+      }
+
+      // Get the transaction details
+      const transactionId = result[0].transaction_id
+
+      // Record incoming payment if there's a payment_value
       if (payment_value > 0) {
         const { error: paymentError } = await supabase
           .from('incoming_payments')
           .insert({
-            transaction_id: transactionData,
+            transaction_id: transactionId,
             customer_name: formData.customer_name,
             payment_amount: payment_value,
             notes: `Initial payment for ${formData.payment_method}`
@@ -232,32 +167,9 @@ export default function RecordSalesPage() {
         if (paymentError) throw paymentError
       }
 
-      // Handle empty tanks - remove from unreturned if customer returned tanks
-      if (formData.returned_empty === 'yes') {
-        const returnedQuantity = formData.empty_quantity_not_returned || 0
-        
-        // Add returned tanks to shop_empty_tanks
-        const { data: existingShopTanks } = await supabase
-          .from('shop_empty_tanks')
-          .select('*')
-          .eq('product_id', selectedProduct.id)
+      // Empty tank handling is now done automatically in the database function
 
-        if (existingShopTanks && existingShopTanks.length > 0) {
-          // Update existing quantity
-          await supabase
-            .from('shop_empty_tanks')
-            .update({ quantity: existingShopTanks[0].quantity + returnedQuantity })
-            .eq('product_id', selectedProduct.id)
-        } else {
-          // Insert new entry
-          await supabase
-            .from('shop_empty_tanks')
-            .insert({
-              product_id: selectedProduct.id,
-              quantity: returnedQuantity
-            })
-        }
-      }
+      // All payment and empty tank handling is now done in the database function
 
       // Reset form
       setSelectedProduct(null)
@@ -271,7 +183,7 @@ export default function RecordSalesPage() {
         empty_quantity_not_returned: 0
       })
 
-      showSuccessModal('Sale recorded successfully!')
+      showSuccessModal(`Sale recorded successfully! Stock: ${result[0].stock_before} → ${result[0].stock_after}`)
       fetchProducts() // Refresh products for stock update
     } catch (error) {
       console.error('Error recording sale:', error)
@@ -325,174 +237,44 @@ export default function RecordSalesPage() {
     setBulkSaving(true)
 
     try {
-      for (const customer of customerBulkSales) {
+      // Prepare bulk sales data for the unified function
+      const bulkSalesData = customerBulkSales.map(customer => {
         const product = products.find(p => p.id === customer.product_id)!
         
-        // Calculate profit and payment values
-        const profit = (customer.selling_price - product.base_price) * customer.quantity
-        let remaining_balance = 0
+        // Calculate payment value based on payment method
         let payment_value = 0
-        let excess_payment = 0
-
         if (customer.payment_method === 'partial_loan') {
-          const total_amount = customer.selling_price * customer.quantity
           payment_value = customer.payment_value
-          remaining_balance = total_amount - customer.payment_value
-          
-          // Check for overpayment
-          if (payment_value > total_amount) {
-            excess_payment = payment_value - total_amount
-            remaining_balance = 0
-            payment_value = total_amount
-          }
-        } else if (customer.payment_method === 'full_loan') {
-          remaining_balance = customer.selling_price * customer.quantity
-          payment_value = 0
-        } else {
+        } else if (customer.payment_method === 'cash') {
           payment_value = customer.selling_price * customer.quantity
         }
-
-        // Create transaction record
-        const { data: transactionData, error: transactionError } = await supabase
-          .rpc('create_transaction_v2', {
-            p_transaction_type: 'sale',
-            p_reference_id: null,
-            p_customer_name: customer.customer_name,
-            p_product_id: customer.product_id,
-            p_quantity: customer.quantity,
-            p_selling_price: customer.selling_price,
-            p_base_price: product.base_price,
-            p_payment_method: customer.payment_method,
-            p_payment_value: payment_value
-          })
-
-        if (transactionError) throw transactionError
-
-        // Insert into sales table for backward compatibility
-        await supabase
-          .from('sales')
-          .insert({
-            customer_name: customer.customer_name,
-            product_id: customer.product_id,
-            quantity: customer.quantity,
-            selling_price: customer.selling_price,
-            payment_method: customer.payment_method,
-            payment_value: payment_value,
-            profit: profit + excess_payment, // Include excess payment in profit
-            returned_empty: customer.returned_empty === 'yes',
-            empty_quantity_not_returned: customer.returned_empty === 'no' ? customer.empty_quantity_not_returned : 0
-          })
-
-        // Update product stocks
-        await supabase
-          .from('products')
-          .update({ stocks: product.stocks - customer.quantity })
-          .eq('id', customer.product_id)
-
-        // Handle loans
-        if (customer.payment_method === 'full_loan' || customer.payment_method === 'partial_loan') {
-          await supabase
-            .from('loans')
-            .insert({
-              customer_name: customer.customer_name,
-              product_id: customer.product_id,
-              selling_price: customer.selling_price,
-              base_price: product.base_price,
-              loan_amount: remaining_balance,
-              paid_amount: payment_value
-            })
+        
+        return {
+          customer_name: customer.customer_name,
+          product_id: customer.product_id,
+          quantity: customer.quantity,
+          selling_price: customer.selling_price,
+          base_price: product.base_price,
+          payment_method: customer.payment_method,
+          payment_value: payment_value,
+          returned_empty: customer.returned_empty === 'yes',
+          empty_quantity_not_returned: customer.empty_quantity_not_returned
         }
+      })
 
-        // Record incoming payment if there's a payment_value
-        if (payment_value > 0) {
-          await supabase
-            .from('incoming_payments')
-            .insert({
-              transaction_id: transactionData,
-              customer_name: customer.customer_name,
-              payment_amount: payment_value,
-              notes: `Initial payment for ${customer.payment_method}`
-            })
-        }
+      // Execute bulk transaction using unified function
+      const { data: bulkResult, error: bulkError } = await supabase
+        .rpc('create_bulk_sale_transactions', {
+          p_sales: JSON.stringify(bulkSalesData)
+        })
 
-        // Handle empty tanks
-        if (customer.returned_empty === 'yes') {
-          const returnedQuantity = customer.empty_quantity_not_returned || 0
-          
-          // Remove from unreturned if exists
-          const { data: unreturned } = await supabase
-            .from('empty_tanks_unreturned')
-            .select('*')
-            .eq('customer_name', customer.customer_name)
-            .eq('product_id', customer.product_id)
+      if (bulkError) throw bulkError
 
-          if (unreturned && unreturned.length > 0) {
-            const current = unreturned[0].quantity
-            if (current <= returnedQuantity) {
-              // Remove entry
-              await supabase
-                .from('empty_tanks_unreturned')
-                .delete()
-                .eq('id', unreturned[0].id)
-            } else {
-              // Update quantity
-              await supabase
-                .from('empty_tanks_unreturned')
-                .update({ quantity: current - returnedQuantity })
-                .eq('id', unreturned[0].id)
-            }
-          }
-
-          // Add returned tanks to shop_empty_tanks
-          const { data: existingShopTanks } = await supabase
-            .from('shop_empty_tanks')
-            .select('*')
-            .eq('product_id', customer.product_id)
-
-          if (existingShopTanks && existingShopTanks.length > 0) {
-            // Update existing quantity
-            await supabase
-              .from('shop_empty_tanks')
-              .update({ quantity: existingShopTanks[0].quantity + returnedQuantity })
-              .eq('product_id', customer.product_id)
-          } else {
-            // Insert new entry
-            await supabase
-              .from('shop_empty_tanks')
-              .insert({
-                product_id: customer.product_id,
-                quantity: returnedQuantity
-              })
-          }
-        } else if (customer.returned_empty === 'no' && customer.empty_quantity_not_returned > 0) {
-          // Insert new entry for unreturned tanks - check if record exists first
-          const { data: existingUnreturned } = await supabase
-            .from('empty_tanks_unreturned')
-            .select('*')
-            .eq('customer_name', customer.customer_name)
-            .eq('product_id', customer.product_id)
-            .single()
-
-          if (existingUnreturned) {
-            // Update existing record
-            await supabase
-              .from('empty_tanks_unreturned')
-              .update({ 
-                quantity: existingUnreturned.quantity + customer.empty_quantity_not_returned,
-                date: new Date().toISOString()
-              })
-              .eq('id', existingUnreturned.id)
-          } else {
-            // Insert new record
-            await supabase
-              .from('empty_tanks_unreturned')
-              .insert({
-                customer_name: customer.customer_name,
-                product_id: customer.product_id,
-                quantity: customer.empty_quantity_not_returned
-              })
-          }
-        }
+      // Check if all transactions were successful
+      const failedTransactions = bulkResult?.filter((result: BulkTransactionResult) => !result.success)
+      if (failedTransactions && failedTransactions.length > 0) {
+        const errorMessages = failedTransactions.map((t: BulkTransactionResult) => `${t.customer_name}: ${t.message}`).join(', ')
+        throw new Error(`Some transactions failed: ${errorMessages}`)
       }
 
       // Reset bulk form

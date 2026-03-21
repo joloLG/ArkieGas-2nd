@@ -147,12 +147,12 @@ export default function SalesTrackingPage() {
 
   const fetchSalesData = async () => {
     try {
-      // Fetch transactions
+      // Fetch transactions (without products join to use historical base_price)
       const { data: transactionsData } = await supabase
         .from('transactions')
         .select(`
           *,
-          products (name, base_price)
+          products (name)
         `)
         .order('date', { ascending: false })
 
@@ -194,10 +194,10 @@ export default function SalesTrackingPage() {
         })
       })
 
-      // Enrich transactions with loan info
+      // Enrich transactions with loan info (use historical base_price from transaction)
       const enrichedTransactions = (transactionsData || []).map(transaction => ({
         ...transaction,
-        base_price: transaction.products?.base_price || 0,
+        base_price: transaction.base_price || 0, // Use historical base_price stored in transaction
         loan_info: loansMap.get(transaction.customer_name)
       }))
 
@@ -228,6 +228,7 @@ export default function SalesTrackingPage() {
       'Customer Name', 
       'Product Name', 
       'Quantity', 
+      'Base Price',
       'Selling Price', 
       'Profit Amount', 
       'Payment Type',
@@ -256,6 +257,7 @@ export default function SalesTrackingPage() {
         sale.customer_name,
         sale.products?.name || 'Unknown',
         sale.quantity || 0,
+        sale.base_price || 0,
         sale.selling_price || 0,
         transactionProfit?.profit_amount || 0, // Use profit_tracking table as source of truth
         (sale.payment_method === 'cash' && sale.transaction_type === 'payment') ? 'CASH LOAN PAYMENT' : sale.payment_method,
@@ -442,7 +444,7 @@ export default function SalesTrackingPage() {
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-gray-900">Recent Sales</h2>
               <div className="text-xs sm:text-sm text-gray-500">
-                Showing {Math.min(filteredSales.length, 50)} of {filteredSales.length} transactions • 9 key columns
+                Showing {Math.min(filteredSales.length, 50)} of {filteredSales.length} transactions • 11 key columns
               </div>
             </div>
             
@@ -465,6 +467,7 @@ export default function SalesTrackingPage() {
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Base Price</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Selling Price</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Profit</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment</th>
@@ -494,6 +497,7 @@ export default function SalesTrackingPage() {
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">{sale.customer_name}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">{sale.products?.name || 'Unknown'}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">{sale.quantity}</td>
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">₱{(sale.base_price || 0).toLocaleString()}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">₱{sale.selling_price?.toLocaleString() || 0}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                       ₱{(transactionProfit?.profit_amount || 0).toLocaleString()}

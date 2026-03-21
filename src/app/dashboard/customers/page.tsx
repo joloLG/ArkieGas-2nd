@@ -135,26 +135,9 @@ export default function CustomersPage() {
       const paymentResult = paymentData?.[0]
       if (!paymentResult) throw new Error('Payment processing failed')
 
-      // Update product stocks if this was the final payment (for full loans)
-      if (paymentResult.is_loan_paid_off) {
-        // Find the original sale to update stocks
-        const { data: saleData } = await supabase
-          .from('transactions')
-          .select('quantity')
-          .eq('reference_id', paymentModal.loan.id)
-          .eq('transaction_type', 'sale')
-          .single()
-
-        if (saleData) {
-          // Update product stocks (customer returns empty tank)
-          const { error: stockError } = await supabase
-            .from('products')
-            .update({ stocks: (await supabase.from('products').select('stocks').eq('id', paymentModal.loan.product_id).single()).data?.stocks + saleData.quantity || 0 })
-            .eq('id', paymentModal.loan.product_id)
-
-          if (stockError) throw stockError
-        }
-      }
+      // FIXED: Do NOT update product stocks on loan payments
+      // Inventory was already deducted when the loan was created
+      // Stocks should remain deducted even after loan is fully paid
 
       setPaymentModal({ loan: null, amount: 0 })
       fetchCustomers()
