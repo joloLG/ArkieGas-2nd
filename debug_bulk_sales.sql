@@ -1,7 +1,6 @@
--- BULK SALES FIX
--- Fixes the "cannot extract elements from a scalar" error in bulk sales
+-- DEBUG VERSION OF BULK SALES FUNCTION
+-- This will help us identify exactly what's happening with the boolean conversion
 
--- Step 1: Fix the bulk transaction function with proper JSON handling
 DROP FUNCTION IF EXISTS create_bulk_sale_transactions(jsonb);
 
 CREATE OR REPLACE FUNCTION create_bulk_sale_transactions(
@@ -22,6 +21,7 @@ DECLARE
     stock_after INTEGER;
     product_name TEXT;
     sale_count INTEGER := 0;
+    debug_info TEXT;
 BEGIN
     -- Validate input is not null or empty
     IF p_sales IS NULL THEN
@@ -81,34 +81,51 @@ BEGIN
                 v_base_price DECIMAL := (sale_record->>'base_price')::DECIMAL;
                 v_payment_method TEXT := sale_record->>'payment_method';
                 v_payment_value DECIMAL := COALESCE((sale_record->>'payment_value')::DECIMAL, 0);
-                v_returned_empty BOOLEAN := COALESCE((sale_record->>'returned_empty')::INTEGER, 0) = 1;
                 v_empty_quantity_not_returned INTEGER := COALESCE((sale_record->>'empty_quantity_not_returned')::INTEGER, 0);
+                -- Debug: Let's see what we actually get for returned_empty
+                v_returned_raw TEXT := sale_record->>'returned_empty';
+                v_returned_empty BOOLEAN;
             BEGIN
-                -- Call the single transaction function
+                -- Debug info
+                debug_info := 'Raw returned_empty value: ' || COALESCE(v_returned_raw, 'NULL') || ', Type: ' || COALESCE(jsonb_typeof(sale_record->'returned_empty'), 'NULL');
+                
+                -- Handle boolean conversion more reliably
+                IF v_returned_raw IN ('1', 'true', 't', 'yes', 'y') THEN
+                    v_returned_empty := TRUE;
+                ELSIF v_returned_raw IN ('0', 'false', 'f', 'no', 'n') THEN
+                    v_returned_empty := FALSE;
+                ELSE
+                    v_returned_empty := FALSE; -- Default to false
+                END IF;
+                
+                -- Add debug info to message
+                debug_info := debug_info || ', Converted to: ' || CASE WHEN v_returned_empty THEN 'TRUE' ELSE 'FALSE' END;
+                
+                -- Call the single transaction function with explicit casting
                 SELECT * INTO transaction_id, stock_before, stock_after
                 FROM create_sale_transaction(
-                    v_customer_name,
-                    v_product_id,
-                    v_quantity,
-                    v_selling_price,
-                    v_base_price,
-                    v_payment_method,
-                    v_payment_value,
-                    v_returned_empty,
-                    v_empty_quantity_not_returned
+                    v_customer_name::TEXT,
+                    v_product_id::UUID,
+                    v_quantity::INTEGER,
+                    v_selling_price::DECIMAL,
+                    v_base_price::DECIMAL,
+                    v_payment_method::TEXT,
+                    v_payment_value::DECIMAL,
+                    v_returned_empty::BOOLEAN,
+                    v_empty_quantity_not_returned::INTEGER
                 ) LIMIT 1;
                 
                 -- Get product name for reporting
                 SELECT name INTO product_name FROM products WHERE id = v_product_id;
                 
-                -- Return success result
-                RETURN QUERY SELECT TRUE, 'Sale processed successfully'::TEXT, 
+                -- Return success result with debug info
+                RETURN QUERY SELECT TRUE, 'Sale processed successfully - ' || debug_info::TEXT, 
                     transaction_id, v_customer_name, COALESCE(product_name, 'Unknown'), 
                     stock_before, stock_after;
                     
             EXCEPTION WHEN OTHERS THEN
-                -- Return error result with specific error message
-                RETURN QUERY SELECT FALSE, SQLERRM::TEXT, 
+                -- Return error result with debug info
+                RETURN QUERY SELECT FALSE, 'Error: ' || SQLERRM || ' - Debug: ' || debug_info::TEXT, 
                     NULL::UUID, v_customer_name, COALESCE(product_name, 'Unknown'),
                     NULL::INTEGER, NULL::INTEGER;
             END;
@@ -117,46 +134,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Step 2: Grant permissions
+-- Grant permissions
 GRANT EXECUTE ON FUNCTION create_bulk_sale_transactions TO authenticated;
 
--- Step 3: Test the function with sample data
-DO $$
-DECLARE
-    test_sales JSONB := '[
-        {
-            "customer_name": "Test Customer 1",
-            "product_id": "00000000-0000-0000-0000-000000000000",
-            "quantity": 2,
-            "selling_price": 50.00,
-            "base_price": 30.00,
-            "payment_method": "cash",
-            "payment_value": 100.00,
-            "returned_empty": false,
-            "empty_quantity_not_returned": 0
-        }
-    ]';
-    result_count INTEGER;
-BEGIN
-    -- Test the function (this will likely fail due to invalid product_id, but should not error on JSON parsing)
-    SELECT COUNT(*) INTO result_count FROM create_bulk_sale_transactions(test_sales);
-    
-    IF result_count >= 0 THEN
-        RAISE NOTICE '✅ Bulk sales function JSON parsing is working correctly';
-    ELSE
-        RAISE EXCEPTION '❌ Bulk sales function has issues';
-    END IF;
-    
-EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM LIKE 'cannot extract elements from a scalar%' THEN
-        RAISE EXCEPTION '❌ JSON parsing error still exists: %', SQLERRM;
-    ELSIF SQLERRM LIKE 'invalid input syntax%' THEN
-        RAISE NOTICE '✅ JSON parsing works, but test data has invalid UUID (expected)';
-    ELSE
-        RAISE NOTICE '✅ Bulk sales function is working (other error is expected with test data): %', SQLERRM;
-    END IF;
-END $$;
-
-SELECT 'Bulk sales fix completed!' as status,
-       'JSON parsing error fixed with proper validation' as details,
-       'Function now handles arrays and missing fields correctly' as improvements;
+SELECT 'Debug bulk sales function created!' as status,
+       'This version will show detailed debug information' as details;

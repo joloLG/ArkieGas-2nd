@@ -1,7 +1,7 @@
--- BULK SALES FIX
--- Fixes the "cannot extract elements from a scalar" error in bulk sales
+-- FINAL BOOLEAN FIX - AVOID CONVERSION ISSUES ENTIRELY
+-- This uses a character-based approach to avoid boolean conversion problems
 
--- Step 1: Fix the bulk transaction function with proper JSON handling
+-- Update the bulk sales function to avoid boolean conversion entirely
 DROP FUNCTION IF EXISTS create_bulk_sale_transactions(jsonb);
 
 CREATE OR REPLACE FUNCTION create_bulk_sale_transactions(
@@ -81,9 +81,25 @@ BEGIN
                 v_base_price DECIMAL := (sale_record->>'base_price')::DECIMAL;
                 v_payment_method TEXT := sale_record->>'payment_method';
                 v_payment_value DECIMAL := COALESCE((sale_record->>'payment_value')::DECIMAL, 0);
-                v_returned_empty BOOLEAN := COALESCE((sale_record->>'returned_empty')::INTEGER, 0) = 1;
                 v_empty_quantity_not_returned INTEGER := COALESCE((sale_record->>'empty_quantity_not_returned')::INTEGER, 0);
+                -- Use character-based boolean to avoid conversion issues
+                v_returned_char TEXT := COALESCE(sale_record->>'returned_empty', 'false');
+                v_returned_empty BOOLEAN := FALSE;
             BEGIN
+                -- Convert character to boolean safely
+                IF v_returned_char IN ('true', 't', '1', 'yes', 'y') THEN
+                    v_returned_empty := TRUE;
+                ELSIF v_returned_char IN ('false', 'f', '0', 'no', 'n') THEN
+                    v_returned_empty := FALSE;
+                ELSE
+                    -- Try to check if it's already a boolean JSON value
+                    BEGIN
+                        v_returned_empty := (sale_record->'returned_empty')::BOOLEAN;
+                    EXCEPTION WHEN OTHERS THEN
+                        v_returned_empty := FALSE; -- Default to false
+                    END;
+                END IF;
+                
                 -- Call the single transaction function
                 SELECT * INTO transaction_id, stock_before, stock_after
                 FROM create_sale_transaction(
@@ -117,46 +133,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Step 2: Grant permissions
+-- Grant permissions
 GRANT EXECUTE ON FUNCTION create_bulk_sale_transactions TO authenticated;
 
--- Step 3: Test the function with sample data
-DO $$
-DECLARE
-    test_sales JSONB := '[
-        {
-            "customer_name": "Test Customer 1",
-            "product_id": "00000000-0000-0000-0000-000000000000",
-            "quantity": 2,
-            "selling_price": 50.00,
-            "base_price": 30.00,
-            "payment_method": "cash",
-            "payment_value": 100.00,
-            "returned_empty": false,
-            "empty_quantity_not_returned": 0
-        }
-    ]';
-    result_count INTEGER;
-BEGIN
-    -- Test the function (this will likely fail due to invalid product_id, but should not error on JSON parsing)
-    SELECT COUNT(*) INTO result_count FROM create_bulk_sale_transactions(test_sales);
-    
-    IF result_count >= 0 THEN
-        RAISE NOTICE '✅ Bulk sales function JSON parsing is working correctly';
-    ELSE
-        RAISE EXCEPTION '❌ Bulk sales function has issues';
-    END IF;
-    
-EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM LIKE 'cannot extract elements from a scalar%' THEN
-        RAISE EXCEPTION '❌ JSON parsing error still exists: %', SQLERRM;
-    ELSIF SQLERRM LIKE 'invalid input syntax%' THEN
-        RAISE NOTICE '✅ JSON parsing works, but test data has invalid UUID (expected)';
-    ELSE
-        RAISE NOTICE '✅ Bulk sales function is working (other error is expected with test data): %', SQLERRM;
-    END IF;
-END $$;
-
-SELECT 'Bulk sales fix completed!' as status,
-       'JSON parsing error fixed with proper validation' as details,
-       'Function now handles arrays and missing fields correctly' as improvements;
+SELECT 'Final boolean fix applied!' as status,
+       'Using character-based boolean conversion to avoid type issues' as details;

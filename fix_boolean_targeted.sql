@@ -1,7 +1,10 @@
--- BULK SALES FIX
--- Fixes the "cannot extract elements from a scalar" error in bulk sales
+-- TARGETED FIX FOR BOOLEAN TO INTEGER CONVERSION ERROR
+-- This specifically addresses the "invalid input syntax for type integer: t" error
 
--- Step 1: Fix the bulk transaction function with proper JSON handling
+-- The issue seems to be that somewhere in the function chain, 
+-- the boolean value "t" is being passed to an integer parameter.
+-- Let's fix this by ensuring proper type conversion in the bulk function.
+
 DROP FUNCTION IF EXISTS create_bulk_sale_transactions(jsonb);
 
 CREATE OR REPLACE FUNCTION create_bulk_sale_transactions(
@@ -72,30 +75,51 @@ BEGIN
                 CONTINUE;
             END IF;
             
-            -- Extract sale parameters with proper type casting
+            -- Extract sale parameters with VERY CAREFUL type casting
             DECLARE
-                v_customer_name TEXT := sale_record->>'customer_name';
+                v_customer_name TEXT := (sale_record->>'customer_name')::TEXT;
                 v_product_id UUID := (sale_record->>'product_id')::UUID;
                 v_quantity INTEGER := (sale_record->>'quantity')::INTEGER;
                 v_selling_price DECIMAL := (sale_record->>'selling_price')::DECIMAL;
                 v_base_price DECIMAL := (sale_record->>'base_price')::DECIMAL;
-                v_payment_method TEXT := sale_record->>'payment_method';
+                v_payment_method TEXT := (sale_record->>'payment_method')::TEXT;
                 v_payment_value DECIMAL := COALESCE((sale_record->>'payment_value')::DECIMAL, 0);
-                v_returned_empty BOOLEAN := COALESCE((sale_record->>'returned_empty')::INTEGER, 0) = 1;
                 v_empty_quantity_not_returned INTEGER := COALESCE((sale_record->>'empty_quantity_not_returned')::INTEGER, 0);
+                -- VERY CAREFUL BOOLEAN CONVERSION
+                v_returned_empty BOOLEAN;
+                v_raw_returned JSONB := sale_record->'returned_empty';
             BEGIN
-                -- Call the single transaction function
+                -- Convert JSON boolean to PostgreSQL boolean safely
+                BEGIN
+                    -- Try direct JSON boolean conversion first
+                    v_returned_empty := v_raw_returned::BOOLEAN;
+                EXCEPTION WHEN OTHERS THEN
+                    -- If that fails, try string conversion
+                    DECLARE
+                        v_returned_text TEXT := COALESCE(sale_record->>'returned_empty', 'false');
+                    BEGIN
+                        IF v_returned_text IN ('true', 't', '1', 'yes', 'y') THEN
+                            v_returned_empty := TRUE;
+                        ELSIF v_returned_text IN ('false', 'f', '0', 'no', 'n') THEN
+                            v_returned_empty := FALSE;
+                        ELSE
+                            v_returned_empty := FALSE; -- Default
+                        END IF;
+                    END;
+                END;
+                
+                -- Call the single transaction function with EXPLICIT type casting
                 SELECT * INTO transaction_id, stock_before, stock_after
                 FROM create_sale_transaction(
-                    v_customer_name,
-                    v_product_id,
-                    v_quantity,
-                    v_selling_price,
-                    v_base_price,
-                    v_payment_method,
-                    v_payment_value,
-                    v_returned_empty,
-                    v_empty_quantity_not_returned
+                    v_customer_name::TEXT,                    -- p_customer_name text
+                    v_product_id::UUID,                       -- p_product_id uuid
+                    v_quantity::INTEGER,                      -- p_quantity integer
+                    v_selling_price::NUMERIC,                 -- p_selling_price numeric
+                    v_base_price::NUMERIC,                    -- p_base_price numeric
+                    v_payment_method::TEXT,                    -- p_payment_method text
+                    v_payment_value::NUMERIC,                 -- p_payment_value numeric
+                    v_returned_empty::BOOLEAN,                -- p_returned_empty boolean
+                    v_empty_quantity_not_returned::INTEGER   -- p_empty_quantity_not_returned integer
                 ) LIMIT 1;
                 
                 -- Get product name for reporting
@@ -117,46 +141,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Step 2: Grant permissions
+-- Grant permissions
 GRANT EXECUTE ON FUNCTION create_bulk_sale_transactions TO authenticated;
 
--- Step 3: Test the function with sample data
-DO $$
-DECLARE
-    test_sales JSONB := '[
-        {
-            "customer_name": "Test Customer 1",
-            "product_id": "00000000-0000-0000-0000-000000000000",
-            "quantity": 2,
-            "selling_price": 50.00,
-            "base_price": 30.00,
-            "payment_method": "cash",
-            "payment_value": 100.00,
-            "returned_empty": false,
-            "empty_quantity_not_returned": 0
-        }
-    ]';
-    result_count INTEGER;
-BEGIN
-    -- Test the function (this will likely fail due to invalid product_id, but should not error on JSON parsing)
-    SELECT COUNT(*) INTO result_count FROM create_bulk_sale_transactions(test_sales);
-    
-    IF result_count >= 0 THEN
-        RAISE NOTICE '✅ Bulk sales function JSON parsing is working correctly';
-    ELSE
-        RAISE EXCEPTION '❌ Bulk sales function has issues';
-    END IF;
-    
-EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM LIKE 'cannot extract elements from a scalar%' THEN
-        RAISE EXCEPTION '❌ JSON parsing error still exists: %', SQLERRM;
-    ELSIF SQLERRM LIKE 'invalid input syntax%' THEN
-        RAISE NOTICE '✅ JSON parsing works, but test data has invalid UUID (expected)';
-    ELSE
-        RAISE NOTICE '✅ Bulk sales function is working (other error is expected with test data): %', SQLERRM;
-    END IF;
-END $$;
-
-SELECT 'Bulk sales fix completed!' as status,
-       'JSON parsing error fixed with proper validation' as details,
-       'Function now handles arrays and missing fields correctly' as improvements;
+SELECT 'Targeted boolean fix applied!' as status,
+       'Fixed with explicit type casting and safe boolean conversion' as details;

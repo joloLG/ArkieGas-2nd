@@ -237,51 +237,120 @@ export default function RecordSalesPage() {
     setBulkSaving(true)
 
     try {
-      // Prepare bulk sales data for the unified function
-      const bulkSalesData = customerBulkSales.map(customer => {
-        const product = products.find(p => p.id === customer.product_id)!
-        
-        // Calculate payment value based on payment method
-        let payment_value = 0
-        if (customer.payment_method === 'partial_loan') {
-          payment_value = customer.payment_value
-        } else if (customer.payment_method === 'cash') {
-          payment_value = customer.selling_price * customer.quantity
+      const results: BulkTransactionResult[] = []
+
+      // Process each customer individually using the single transaction function
+      for (const customer of customerBulkSales) {
+        try {
+          const product = products.find(p => p.id === customer.product_id)!
+          
+          // Calculate payment value based on payment method
+          let payment_value = 0
+          if (customer.payment_method === 'partial_loan') {
+            payment_value = customer.payment_value
+          } else if (customer.payment_method === 'cash') {
+            payment_value = customer.selling_price * customer.quantity
+          }
+          
+          // Call the single transaction function for each customer
+          const { data: result, error: transactionError } = await supabase
+            .rpc('create_sale_transaction', {
+              p_customer_name: customer.customer_name,
+              p_product_id: customer.product_id,
+              p_quantity: customer.quantity,
+              p_selling_price: customer.selling_price,
+              p_base_price: product.base_price,
+              p_payment_method: customer.payment_method,
+              p_payment_value: payment_value,
+              p_returned_empty: customer.returned_empty === 'yes',
+              p_empty_quantity_not_returned: customer.empty_quantity_not_returned
+            })
+
+          if (transactionError) {
+            // Add failed result
+            results.push({
+              success: false,
+              message: transactionError.message,
+              transaction_id: null,
+              customer_name: customer.customer_name,
+              product_name: product.name,
+              stock_before: null,
+              stock_after: null
+            })
+          } else if (!result || result.length === 0 || !result[0].success) {
+            // Add failed result
+            results.push({
+              success: false,
+              message: result?.[0]?.message || 'Transaction failed',
+              transaction_id: null,
+              customer_name: customer.customer_name,
+              product_name: product.name,
+              stock_before: null,
+              stock_after: null
+            })
+          } else {
+            // Add successful result
+            results.push({
+              success: true,
+              message: 'Sale processed successfully',
+              transaction_id: result[0].transaction_id,
+              customer_name: customer.customer_name,
+              product_name: product.name,
+              stock_before: result[0].stock_before,
+              stock_after: result[0].stock_after
+            })
+
+            // Record incoming payment if there's a payment_value
+            if (payment_value > 0 && result[0].transaction_id) {
+              const { error: paymentError } = await supabase
+                .from('incoming_payments')
+                .insert({
+                  transaction_id: result[0].transaction_id,
+                  customer_name: customer.customer_name,
+                  payment_amount: payment_value,
+                  notes: `Initial payment for ${customer.payment_method}`
+                })
+
+              if (paymentError) {
+                console.error('Error recording payment:', paymentError)
+              }
+            }
+          }
+        } catch (error) {
+          // Add failed result for any unexpected errors
+          results.push({
+            success: false,
+            message: error instanceof Error ? error.message : 'Unknown error',
+            transaction_id: null,
+            customer_name: customer.customer_name,
+            product_name: products.find(p => p.id === customer.product_id)?.name || 'Unknown',
+            stock_before: null,
+            stock_after: null
+          })
         }
+      }
+
+      // Check if any transactions failed
+      const failedTransactions = results.filter(result => !result.success)
+      if (failedTransactions.length > 0) {
+        const successCount = results.filter(result => result.success).length
+        const errorMessages = failedTransactions.map(t => `${t.customer_name}: ${t.message}`).join(', ')
         
-        return {
-          customer_name: customer.customer_name,
-          product_id: customer.product_id,
-          quantity: customer.quantity,
-          selling_price: customer.selling_price,
-          base_price: product.base_price,
-          payment_method: customer.payment_method,
-          payment_value: payment_value,
-          returned_empty: customer.returned_empty === 'yes',
-          empty_quantity_not_returned: customer.empty_quantity_not_returned
+        // Show partial success message
+        if (successCount > 0) {
+          alert(`Partial success: ${successCount} sales processed successfully. Failed transactions: ${errorMessages}`)
+        } else {
+          alert(`All transactions failed: ${errorMessages}`)
+          throw new Error(`All transactions failed: ${errorMessages}`)
         }
-      })
-
-      // Execute bulk transaction using unified function
-      const { data: bulkResult, error: bulkError } = await supabase
-        .rpc('create_bulk_sale_transactions', {
-          p_sales: JSON.stringify(bulkSalesData)
-        })
-
-      if (bulkError) throw bulkError
-
-      // Check if all transactions were successful
-      const failedTransactions = bulkResult?.filter((result: BulkTransactionResult) => !result.success)
-      if (failedTransactions && failedTransactions.length > 0) {
-        const errorMessages = failedTransactions.map((t: BulkTransactionResult) => `${t.customer_name}: ${t.message}`).join(', ')
-        throw new Error(`Some transactions failed: ${errorMessages}`)
+      } else {
+        // All successful
+        showSuccessModal(`All ${results.length} bulk sales recorded successfully!`)
       }
 
       // Reset bulk form
       setCustomerBulkSales([])
       setBulkModalOpen(false)
-
-      showSuccessModal('Bulk sales recorded successfully!')
       fetchProducts() // Refresh products for stock update
     } catch (error) {
       console.error('Error recording bulk sales:', error)
