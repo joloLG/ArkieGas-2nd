@@ -645,6 +645,7 @@ export default function CustomersPage() {
                       max={paymentModal.loan.loan_amount - paymentModal.loan.paid_amount}
                       value={paymentModal.amount}
                       onChange={(e) => setPaymentModal({ ...paymentModal, amount: parseFloat(e.target.value) || 0 })}
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 text-black placeholder-gray-500"
                       placeholder="0.00"
                     />
@@ -709,6 +710,7 @@ export default function CustomersPage() {
                     max={returnModal.tank.quantity}
                     value={returnModal.quantity}
                     onChange={(e) => setReturnModal({ ...returnModal, quantity: parseInt(e.target.value) || 0 })}
+                    onWheel={(e) => e.currentTarget.blur()}
                     className="block w-full border border-gray-300 rounded-lg shadow-sm py-3 px-3 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-lg text-black placeholder-gray-500"
                     placeholder="Enter quantity"
                   />

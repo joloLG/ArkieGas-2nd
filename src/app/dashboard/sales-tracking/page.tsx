@@ -219,6 +219,7 @@ export default function SalesTrackingPage() {
       'Selling Price', 
       'Profit Amount', 
       'Payment Type',
+      'Payment Value',
       'Remaining Balance',
       'Returned Empty Tank',
       'Transaction Date'
@@ -246,6 +247,7 @@ export default function SalesTrackingPage() {
         sale.selling_price || 0,
         transactionProfit?.profit_amount || calculateTransactionProfitFromDatabase(sale), // Use profit_tracking if available
         (sale.payment_method === 'cash' && sale.transaction_type === 'payment') ? 'CASH LOAN PAYMENT' : sale.payment_method,
+        sale.payment_value || 0,
         loanInfo?.remaining_balance || sale.remaining_balance || 0,
         returnedEmptyTank,
         new Date(sale.date).toLocaleDateString()
@@ -454,6 +456,7 @@ export default function SalesTrackingPage() {
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Selling Price</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Profit</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment</th>
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment Value</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Remaining Balance</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Returned Empty Tank</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
@@ -493,6 +496,7 @@ export default function SalesTrackingPage() {
                         {(sale.payment_method === 'cash' && sale.transaction_type === 'payment') ? 'CASH LOAN PAYMENT' : sale.payment_method}
                       </span>
                     </td>
+                    <td className="px-3 py-4 whitespace-nowrap text-sm font-medium text-blue-600">₱{(sale.payment_value || 0).toLocaleString()}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">₱{(loanInfo?.remaining_balance || sale.remaining_balance || 0).toLocaleString()}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                       <span className={`px-2 py-1 text-xs rounded-full ${

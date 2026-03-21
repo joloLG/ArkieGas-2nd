@@ -41,6 +41,15 @@ export default function RecordSalesPage() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false)
   const [bulkSaving, setBulkSaving] = useState(false)
   const [customerBulkSales, setCustomerBulkSales] = useState<CustomerBulkSale[]>([])
+  const [successModal, setSuccessModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
+
+  const showSuccessModal = (message: string) => {
+    setSuccessModal({ isOpen: true, message })
+    // Auto-close after 1.5 seconds
+    setTimeout(() => {
+      setSuccessModal({ isOpen: false, message: '' })
+    }, 1500)
+  }
 
   useEffect(() => {
     fetchProducts()
@@ -175,19 +184,38 @@ export default function RecordSalesPage() {
           }
         }
       } else if (formData.returned_empty === 'no' && formData.empty_quantity_not_returned > 0) {
-        // Store not returned tank information
-        const { error: unreturnedError } = await supabase
+        // Store not returned tank information - check if record exists first
+        const { data: existingUnreturned } = await supabase
           .from('empty_tanks_unreturned')
-          .upsert({
-            customer_name: formData.customer_name,
-            product_id: selectedProduct.id,
-            quantity: formData.empty_quantity_not_returned,
-            date: new Date().toISOString()
-          }, {
-            onConflict: 'customer_name,product_id'
-          })
+          .select('*')
+          .eq('customer_name', formData.customer_name)
+          .eq('product_id', selectedProduct.id)
+          .single()
 
-        if (unreturnedError) throw unreturnedError
+        if (existingUnreturned) {
+          // Update existing record
+          const { error: updateError } = await supabase
+            .from('empty_tanks_unreturned')
+            .update({ 
+              quantity: existingUnreturned.quantity + formData.empty_quantity_not_returned,
+              date: new Date().toISOString()
+            })
+            .eq('id', existingUnreturned.id)
+
+          if (updateError) throw updateError
+        } else {
+          // Insert new record
+          const { error: insertError } = await supabase
+            .from('empty_tanks_unreturned')
+            .insert({
+              customer_name: formData.customer_name,
+              product_id: selectedProduct.id,
+              quantity: formData.empty_quantity_not_returned,
+              date: new Date().toISOString()
+            })
+
+          if (insertError) throw insertError
+        }
       }
 
       // Record incoming payment if there's a payment_value (for cash and partial loan payments)
@@ -229,15 +257,6 @@ export default function RecordSalesPage() {
               quantity: returnedQuantity
             })
         }
-      } else if (formData.returned_empty === 'no' && formData.empty_quantity_not_returned > 0) {
-        // Insert new entry for unreturned tanks
-        await supabase
-          .from('empty_tanks_unreturned')
-          .insert({
-            customer_name: formData.customer_name,
-            product_id: selectedProduct.id,
-            quantity: formData.empty_quantity_not_returned
-          })
       }
 
       // Reset form
@@ -252,7 +271,7 @@ export default function RecordSalesPage() {
         empty_quantity_not_returned: 0
       })
 
-      alert('Sale recorded successfully!')
+      showSuccessModal('Sale recorded successfully!')
       fetchProducts() // Refresh products for stock update
     } catch (error) {
       console.error('Error recording sale:', error)
@@ -446,14 +465,33 @@ export default function RecordSalesPage() {
               })
           }
         } else if (customer.returned_empty === 'no' && customer.empty_quantity_not_returned > 0) {
-          // Insert new entry for unreturned tanks
-          await supabase
+          // Insert new entry for unreturned tanks - check if record exists first
+          const { data: existingUnreturned } = await supabase
             .from('empty_tanks_unreturned')
-            .insert({
-              customer_name: customer.customer_name,
-              product_id: customer.product_id,
-              quantity: customer.empty_quantity_not_returned
-            })
+            .select('*')
+            .eq('customer_name', customer.customer_name)
+            .eq('product_id', customer.product_id)
+            .single()
+
+          if (existingUnreturned) {
+            // Update existing record
+            await supabase
+              .from('empty_tanks_unreturned')
+              .update({ 
+                quantity: existingUnreturned.quantity + customer.empty_quantity_not_returned,
+                date: new Date().toISOString()
+              })
+              .eq('id', existingUnreturned.id)
+          } else {
+            // Insert new record
+            await supabase
+              .from('empty_tanks_unreturned')
+              .insert({
+                customer_name: customer.customer_name,
+                product_id: customer.product_id,
+                quantity: customer.empty_quantity_not_returned
+              })
+          }
         }
       }
 
@@ -461,7 +499,7 @@ export default function RecordSalesPage() {
       setCustomerBulkSales([])
       setBulkModalOpen(false)
 
-      alert('Bulk sales recorded successfully!')
+      showSuccessModal('Bulk sales recorded successfully!')
       fetchProducts() // Refresh products for stock update
     } catch (error) {
       console.error('Error recording bulk sales:', error)
@@ -759,12 +797,20 @@ export default function RecordSalesPage() {
                   </p>
                 </div>
                 {formData.payment_method === 'partial_loan' && (
-                  <div>
-                    <p className="text-sm text-gray-600">Loan Amount:</p>
-                    <p className="text-lg font-bold text-orange-600">
-                      ₱{((formData.selling_price * formData.quantity) - formData.payment_value).toLocaleString()}
-                    </p>
-                  </div>
+                  <>
+                    <div>
+                      <p className="text-sm text-gray-600">Payment Value:</p>
+                      <p className="text-lg font-bold text-blue-600">
+                        ₱{formData.payment_value.toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Remaining Balance:</p>
+                      <p className="text-lg font-bold text-orange-600">
+                        ₱{((formData.selling_price * formData.quantity) - formData.payment_value).toLocaleString()}
+                      </p>
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -1041,6 +1087,44 @@ export default function RecordSalesPage() {
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {successModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full transform transition-all duration-300 scale-100 animate-pulse">
+            <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-4 rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-white">Success!</h3>
+                  <p className="text-green-100 text-sm mt-1">Transaction completed</p>
+                </div>
+                <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p className="text-lg font-semibold text-gray-900 mb-2">{successModal.message}</p>
+              <p className="text-sm text-gray-600 mb-6">Your transaction has been successfully recorded.</p>
+              
+              <button
+                onClick={() => setSuccessModal({ isOpen: false, message: '' })}
+                className="w-full bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-200 transform hover:scale-105 shadow-lg"
+              >
+                DONE
+              </button>
             </div>
           </div>
         </div>
