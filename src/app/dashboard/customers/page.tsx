@@ -140,7 +140,14 @@ export default function CustomersPage() {
       // Stocks should remain deducted even after loan is fully paid
 
       setPaymentModal({ loan: null, amount: 0 })
-      fetchCustomers()
+      
+      // Refresh both the main customer list and the selected customer data
+      await fetchCustomers()
+      
+      // If there's a selected customer, update their data specifically
+      if (selectedCustomer) {
+        await updateSelectedCustomerData(selectedCustomer.name)
+      }
     } catch (error) {
       console.error('Error recording payment:', error)
       alert('Error recording payment')
@@ -193,12 +200,53 @@ export default function CustomersPage() {
       }
 
       setReturnModal({ tank: null, quantity: 0 })
-      fetchCustomers()
+      
+      // Refresh both the main customer list and the selected customer data
+      await fetchCustomers()
+      
+      // If there's a selected customer, update their data specifically
+      if (selectedCustomer) {
+        await updateSelectedCustomerData(selectedCustomer.name)
+      }
     } catch (error) {
       console.error('Error recording return:', error)
       alert('Error recording return')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const updateSelectedCustomerData = async (customerName: string) => {
+    try {
+      // Get fresh data for the selected customer
+      const { data: loansData } = await supabase
+        .from('loans')
+        .select(`
+          *,
+          products (name)
+        `)
+        .eq('customer_name', customerName)
+        .order('date', { ascending: false })
+
+      const { data: tanksData } = await supabase
+        .from('empty_tanks_unreturned')
+        .select(`
+          *,
+          products (name)
+        `)
+        .eq('customer_name', customerName)
+        .order('date', { ascending: false })
+
+      // Update the selected customer with fresh data
+      if (selectedCustomer && selectedCustomer.name === customerName) {
+        setSelectedCustomer({
+          name: customerName,
+          loans: loansData || [],
+          unreturnedTanks: tanksData || []
+        })
+      }
+    } catch (error) {
+      console.error('Error updating selected customer data:', error)
     }
   }
 
@@ -373,8 +421,14 @@ export default function CustomersPage() {
 
       {/* Customer Details Modal */}
       {detailsModal && selectedCustomer && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto transform transition-all duration-300 scale-100">
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-50 p-4"
+          onClick={() => setDetailsModal(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto transform transition-all duration-300 scale-100"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-4 rounded-t-2xl sticky top-0 z-10">
               <div className="flex items-center justify-between">
                 <div>
