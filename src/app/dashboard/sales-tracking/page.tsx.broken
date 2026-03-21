@@ -276,7 +276,6 @@ export default function SalesTrackingPage() {
     fetchSalesData()
     fetchYearlyData()
     fetchProductSalesData()
-    fetchLoansData()
     fetchProducts()
   }, [filter, selectedDate, selectedProduct])
 

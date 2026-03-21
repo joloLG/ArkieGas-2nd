@@ -59,14 +59,14 @@ export default function DashboardPage() {
         // Get transactions for sales calculation
         supabase
           .from('transactions')
-          .select('customer_name, payment_value, payment_method, date, products!inner(name)')
+          .select('id, transaction_type, reference_id, customer_name, product_id, quantity, selling_price, base_price, payment_method, payment_value, remaining_balance, excess_payment, profit, date')
           .gte('date', startOfMonth.toISOString())
           .lte('date', endOfMonth.toISOString()),
         
         // Get loans for active loan calculation
         supabase
           .from('loans')
-          .select('loan_amount, paid_amount, customer_name'),
+          .select('id, customer_name, product_id, selling_price, base_price, loan_amount, paid_amount, date'),
         
         // Get profit tracking data for accurate profit calculation
         supabase
@@ -85,11 +85,11 @@ export default function DashboardPage() {
       ])
 
       // Use standardized calculation functions
-      const transactions = transactionsData || []
-      const loans = loansData || []
-      const profitTracking = profitTrackingData || []
-      const products = productsData || []
-      const unreturned = unreturnedData || []
+      const transactions = transactionsData.data || []
+      const loans = loansData.data || []
+      const profitTracking = profitTrackingData.data || []
+      const products = productsData.data || []
+      const unreturned = unreturnedData.data || []
 
       const financialSummary = getFinancialSummaryFromDatabase(
         transactions,
