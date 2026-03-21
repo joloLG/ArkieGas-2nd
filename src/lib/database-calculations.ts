@@ -188,17 +188,28 @@ export function getFinancialSummaryFromDatabase(
  * Uses database logic: (selling_price - base_price) * quantity
  */
 export function calculateTransactionProfitFromDatabase(transaction: DatabaseTransaction): number {
-  if (transaction.transaction_type !== 'sale') {
-    return 0 // No profit for payment transactions
+  if (transaction.transaction_type === 'sale') {
+    if (transaction.payment_method === 'cash') {
+      // Immediate profit for cash sales
+      return (transaction.selling_price - transaction.base_price) * transaction.quantity
+    } else {
+      // For loans (partial and full), profit is only recognized when fully paid
+      // Check if remaining balance is 0 to determine if fully paid
+      if (transaction.remaining_balance === 0) {
+        // Loan is fully paid, recognize the full profit
+        return (transaction.selling_price - transaction.base_price) * transaction.quantity
+      } else {
+        // Loan not fully paid yet, no profit recognized
+        return 0
+      }
+    }
+  } else if (transaction.transaction_type === 'payment') {
+    // Payment transactions don't generate profit directly
+    // Profit is recognized when the original loan transaction is fully paid
+    return 0
   }
   
-  if (transaction.payment_method === 'cash') {
-    // Immediate profit for cash sales
-    return (transaction.selling_price - transaction.base_price) * transaction.quantity
-  } else {
-    // For loans, profit is calculated in database and stored in profit column
-    return transaction.profit || 0
-  }
+  return 0
 }
 
 /**

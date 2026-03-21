@@ -9,7 +9,6 @@ import {
   calculateTotalProfitFromProfitTracking,
   calculateActiveLoansFromDatabase,
   getCustomersWithActiveLoansFromDatabase,
-  calculateTransactionProfitFromDatabase,
   DatabaseTransaction,
   ProfitTracking
 } from '@/lib/database-calculations'
@@ -53,6 +52,10 @@ export default function SalesTrackingPage() {
   const [filteredSales, setFilteredSales] = useState<ExtendedDatabaseTransaction[]>([])
   const [filteredProfitTracking, setFilteredProfitTracking] = useState<ProfitTracking[]>([])
   const [filteredEmptyTanks, setFilteredEmptyTanks] = useState<EmptyTank[]>([])
+  
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
   
   // Generate filter options
   const currentYear = new Date().getFullYear()
@@ -121,6 +124,9 @@ export default function SalesTrackingPage() {
     setFilteredSales(filteredSalesData)
     setFilteredProfitTracking(filteredProfitTrackingData)
     setFilteredEmptyTanks(filteredEmptyTanksData)
+    
+    // Reset to first page when filters change
+    setCurrentPage(1)
 
     // Update summary cards with filtered data
     const salesTotal = calculateTotalSalesFromTransactions(filteredSalesData as DatabaseTransaction[])
@@ -128,6 +134,12 @@ export default function SalesTrackingPage() {
     setTotalSales(salesTotal)
     setTotalProfit(profitTotal)
   }, [selectedMonth, selectedYear, sales, profitTracking, emptyTanks])
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredSales.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedSales = filteredSales.slice(startIndex, endIndex)
 
   useEffect(() => {
     filterData()
@@ -245,7 +257,7 @@ export default function SalesTrackingPage() {
         sale.products?.name || 'Unknown',
         sale.quantity || 0,
         sale.selling_price || 0,
-        transactionProfit?.profit_amount || calculateTransactionProfitFromDatabase(sale), // Use profit_tracking if available
+        transactionProfit?.profit_amount || 0, // Use profit_tracking table as source of truth
         (sale.payment_method === 'cash' && sale.transaction_type === 'payment') ? 'CASH LOAN PAYMENT' : sale.payment_method,
         sale.payment_value || 0,
         loanInfo?.remaining_balance || sale.remaining_balance || 0,
@@ -463,7 +475,7 @@ export default function SalesTrackingPage() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredSales.slice(0, 10).map((sale) => {
+              {paginatedSales.map((sale) => {
                 const transactionProfit = filteredProfitTracking.find(pt => pt.transaction_id === sale.id)
                 const loanInfo = sale.loan_info
                 
@@ -484,7 +496,7 @@ export default function SalesTrackingPage() {
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">{sale.quantity}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">₱{sale.selling_price?.toLocaleString() || 0}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ₱{(transactionProfit?.profit_amount || calculateTransactionProfitFromDatabase(sale)).toLocaleString()}
+                      ₱{(transactionProfit?.profit_amount || 0).toLocaleString()}
                     </td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                       <span className={`px-2 py-1 text-xs rounded-full ${
@@ -514,6 +526,61 @@ export default function SalesTrackingPage() {
             </tbody>
           </table>
         </div>
+        
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-between">
+            <div className="text-sm text-gray-700">
+              Showing {startIndex + 1} to {Math.min(endIndex, filteredSales.length)} of {filteredSales.length} results
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              
+              <div className="flex items-center space-x-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum: number
+                  if (totalPages <= 5) {
+                    pageNum = i + 1
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i
+                  } else {
+                    pageNum = currentPage - 2 + i
+                  }
+                  
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-3 py-1 text-sm border rounded-md ${
+                        currentPage === pageNum
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  )
+                })}
+              </div>
+              
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
