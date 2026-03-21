@@ -140,22 +140,51 @@ export default function RecordSalesPage() {
 
       // Handle empty tank returns
       if (formData.returned_empty === 'yes') {
-        // Customer returned empty tank - update stocks back
+        // Customer returned empty tanks - update stocks back with returned quantity
+        const returnedQuantity = formData.empty_quantity_not_returned || 0
         const { error: returnError } = await supabase
           .from('products')
-          .update({ stocks: (selectedProduct.stocks - formData.quantity) + formData.quantity })
+          .update({ stocks: (selectedProduct.stocks - formData.quantity) + returnedQuantity })
           .eq('id', selectedProduct.id)
 
         if (returnError) throw returnError
+        
+        // Remove from unreturned tanks if exists
+        const { data: unreturned } = await supabase
+          .from('empty_tanks_unreturned')
+          .select('*')
+          .eq('customer_name', formData.customer_name)
+          .eq('product_id', selectedProduct.id)
+
+        if (unreturned && unreturned.length > 0) {
+          const current = unreturned[0].quantity
+          if (current <= returnedQuantity) {
+            // Remove all unreturned tanks
+            await supabase
+              .from('empty_tanks_unreturned')
+              .delete()
+              .eq('customer_name', formData.customer_name)
+              .eq('product_id', selectedProduct.id)
+          } else {
+            // Reduce unreturned tanks
+            await supabase
+              .from('empty_tanks_unreturned')
+              .update({ quantity: current - returnedQuantity })
+              .eq('customer_name', formData.customer_name)
+              .eq('product_id', selectedProduct.id)
+          }
+        }
       } else if (formData.returned_empty === 'no' && formData.empty_quantity_not_returned > 0) {
-        // Customer didn't return empty tanks - record it
+        // Store not returned tank information
         const { error: unreturnedError } = await supabase
           .from('empty_tanks_unreturned')
-          .insert({
+          .upsert({
             customer_name: formData.customer_name,
             product_id: selectedProduct.id,
             quantity: formData.empty_quantity_not_returned,
             date: new Date().toISOString()
+          }, {
+            onConflict: 'customer_name,product_id'
           })
 
         if (unreturnedError) throw unreturnedError
@@ -177,30 +206,8 @@ export default function RecordSalesPage() {
 
       // Handle empty tanks - remove from unreturned if customer returned tanks
       if (formData.returned_empty === 'yes') {
-        // Remove from unreturned if exists
-        const { data: unreturned } = await supabase
-          .from('empty_tanks_unreturned')
-          .select('*')
-          .eq('customer_name', formData.customer_name)
-          .eq('product_id', selectedProduct.id)
-
-        if (unreturned && unreturned.length > 0) {
-          const current = unreturned[0].quantity
-          if (current <= formData.quantity) {
-            // Remove entry
-            await supabase
-              .from('empty_tanks_unreturned')
-              .delete()
-              .eq('id', unreturned[0].id)
-          } else {
-            // Update quantity
-            await supabase
-              .from('empty_tanks_unreturned')
-              .update({ quantity: current - formData.quantity })
-              .eq('id', unreturned[0].id)
-          }
-        }
-
+        const returnedQuantity = formData.empty_quantity_not_returned || 0
+        
         // Add returned tanks to shop_empty_tanks
         const { data: existingShopTanks } = await supabase
           .from('shop_empty_tanks')
@@ -211,7 +218,7 @@ export default function RecordSalesPage() {
           // Update existing quantity
           await supabase
             .from('shop_empty_tanks')
-            .update({ quantity: existingShopTanks[0].quantity + formData.quantity })
+            .update({ quantity: existingShopTanks[0].quantity + returnedQuantity })
             .eq('product_id', selectedProduct.id)
         } else {
           // Insert new entry
@@ -219,33 +226,18 @@ export default function RecordSalesPage() {
             .from('shop_empty_tanks')
             .insert({
               product_id: selectedProduct.id,
-              quantity: formData.quantity
+              quantity: returnedQuantity
             })
         }
-      } else {
-        // Add to unreturned
-        const { data: existing } = await supabase
+      } else if (formData.returned_empty === 'no' && formData.empty_quantity_not_returned > 0) {
+        // Insert new entry for unreturned tanks
+        await supabase
           .from('empty_tanks_unreturned')
-          .select('*')
-          .eq('customer_name', formData.customer_name)
-          .eq('product_id', selectedProduct.id)
-
-        if (existing && existing.length > 0) {
-          // Update
-          await supabase
-            .from('empty_tanks_unreturned')
-            .update({ quantity: existing[0].quantity + formData.empty_quantity_not_returned })
-            .eq('id', existing[0].id)
-        } else {
-          // Insert
-          await supabase
-            .from('empty_tanks_unreturned')
-            .insert({
-              customer_name: formData.customer_name,
-              product_id: selectedProduct.id,
-              quantity: formData.empty_quantity_not_returned
-            })
-        }
+          .insert({
+            customer_name: formData.customer_name,
+            product_id: selectedProduct.id,
+            quantity: formData.empty_quantity_not_returned
+          })
       }
 
       // Reset form
@@ -406,6 +398,8 @@ export default function RecordSalesPage() {
 
         // Handle empty tanks
         if (customer.returned_empty === 'yes') {
+          const returnedQuantity = customer.empty_quantity_not_returned || 0
+          
           // Remove from unreturned if exists
           const { data: unreturned } = await supabase
             .from('empty_tanks_unreturned')
@@ -415,7 +409,7 @@ export default function RecordSalesPage() {
 
           if (unreturned && unreturned.length > 0) {
             const current = unreturned[0].quantity
-            if (current <= customer.quantity) {
+            if (current <= returnedQuantity) {
               // Remove entry
               await supabase
                 .from('empty_tanks_unreturned')
@@ -425,7 +419,7 @@ export default function RecordSalesPage() {
               // Update quantity
               await supabase
                 .from('empty_tanks_unreturned')
-                .update({ quantity: current - customer.quantity })
+                .update({ quantity: current - returnedQuantity })
                 .eq('id', unreturned[0].id)
             }
           }
@@ -440,7 +434,7 @@ export default function RecordSalesPage() {
             // Update existing quantity
             await supabase
               .from('shop_empty_tanks')
-              .update({ quantity: existingShopTanks[0].quantity + customer.quantity })
+              .update({ quantity: existingShopTanks[0].quantity + returnedQuantity })
               .eq('product_id', customer.product_id)
           } else {
             // Insert new entry
@@ -448,33 +442,18 @@ export default function RecordSalesPage() {
               .from('shop_empty_tanks')
               .insert({
                 product_id: customer.product_id,
-                quantity: customer.quantity
+                quantity: returnedQuantity
               })
           }
-        } else {
-          // Add to unreturned tanks
-          const { data: existingUnreturned } = await supabase
+        } else if (customer.returned_empty === 'no' && customer.empty_quantity_not_returned > 0) {
+          // Insert new entry for unreturned tanks
+          await supabase
             .from('empty_tanks_unreturned')
-            .select('*')
-            .eq('customer_name', customer.customer_name)
-            .eq('product_id', customer.product_id)
-
-          if (existingUnreturned && existingUnreturned.length > 0) {
-            // Update existing quantity
-            await supabase
-              .from('empty_tanks_unreturned')
-              .update({ quantity: existingUnreturned[0].quantity + customer.empty_quantity_not_returned })
-              .eq('id', existingUnreturned[0].id)
-          } else {
-            // Insert new entry
-            await supabase
-              .from('empty_tanks_unreturned')
-              .insert({
-                customer_name: customer.customer_name,
-                product_id: customer.product_id,
-                quantity: customer.empty_quantity_not_returned
-              })
-          }
+            .insert({
+              customer_name: customer.customer_name,
+              product_id: customer.product_id,
+              quantity: customer.empty_quantity_not_returned
+            })
         }
       }
 
@@ -495,6 +474,14 @@ export default function RecordSalesPage() {
   const calculateBulkTotal = () => {
     return customerBulkSales.reduce((total, customer) => {
       return total + (customer.selling_price * customer.quantity)
+    }, 0)
+  }
+
+  const calculateBulkProfit = () => {
+    return customerBulkSales.reduce((total, customer) => {
+      const product = products.find(p => p.id === customer.product_id)
+      if (!product) return total
+      return total + ((customer.selling_price * customer.quantity) - (product.base_price * customer.quantity))
     }, 0)
   }
 
@@ -653,8 +640,9 @@ export default function RecordSalesPage() {
                     step="0.01"
                     required
                     value={formData.selling_price}
-                    onChange={(e) => setFormData({ ...formData, selling_price: parseFloat(e.target.value) })}
-                    className="pl-8 block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 text-black placeholder-gray-500"
+                    onChange={(e) => setFormData({...formData, selling_price: Number(e.target.value)})}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    className="w-full pl-8 pr-3 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200"
                     placeholder="0.00"
                   />
                 </div>
@@ -668,8 +656,9 @@ export default function RecordSalesPage() {
                   required
                   value={formData.quantity}
                   onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) })}
-                  className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 text-black placeholder-gray-500"
-                  placeholder="1"
+                  onWheel={(e) => e.currentTarget.blur()}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200"
+                  placeholder="0"
                 />
               </div>
               <div>
@@ -697,6 +686,7 @@ export default function RecordSalesPage() {
                     required
                     value={formData.payment_value}
                     onChange={(e) => setFormData({ ...formData, payment_value: parseFloat(e.target.value) })}
+                    onWheel={(e) => e.currentTarget.blur()}
                     className="pl-8 block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 text-black placeholder-gray-500"
                     placeholder="0.00"
                   />
@@ -708,7 +698,14 @@ export default function RecordSalesPage() {
               <label className="block text-sm font-semibold text-gray-700 mb-2">Returned Empty Tank</label>
               <select
                 value={formData.returned_empty}
-                onChange={(e) => setFormData({ ...formData, returned_empty: e.target.value })}
+                onChange={(e) => {
+  const newValue = e.target.value
+  setFormData({ 
+    ...formData, 
+    returned_empty: newValue,
+    empty_quantity_not_returned: newValue === 'yes' ? formData.quantity : 0
+  })
+}}
                 className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 text-black placeholder-gray-500"
               >
                 <option value="yes">✅ Yes</option>
@@ -716,17 +713,33 @@ export default function RecordSalesPage() {
               </select>
             </div>
             
-            {formData.returned_empty === 'no' && (
+            {formData.returned_empty === 'yes' && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Quantity Not Returned</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity of Empty Tanks Returned</label>
                 <input
                   type="number"
                   min="0"
-                  required
+                  max={formData.quantity}
                   value={formData.empty_quantity_not_returned}
-                  onChange={(e) => setFormData({ ...formData, empty_quantity_not_returned: parseInt(e.target.value) })}
-                  className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 text-black placeholder-gray-500"
-                  placeholder="0"
+                  onChange={(e) => setFormData({...formData, empty_quantity_not_returned: Number(e.target.value)})}
+                  onWheel={(e) => e.currentTarget.blur()}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+            )}
+            {formData.returned_empty === 'no' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity of Empty Tanks Not Returned</label>
+                <input
+                  type="number"
+                  min="0"
+                  max={formData.quantity}
+                  value={formData.empty_quantity_not_returned}
+                  onChange={(e) => setFormData({...formData, empty_quantity_not_returned: Number(e.target.value)})}
+                  onWheel={(e) => e.currentTarget.blur()}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
             )}
@@ -741,10 +754,8 @@ export default function RecordSalesPage() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Profit:</p>
-                  <p className={`text-lg font-bold ${
-                    (selectedProduct.base_price - formData.selling_price) * formData.quantity >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    ₱{((selectedProduct.base_price - formData.selling_price) * formData.quantity).toLocaleString()}
+                  <p className="text-lg font-bold text-green-600">
+                    ₱{((formData.selling_price * formData.quantity) - (selectedProduct.base_price * formData.quantity)).toLocaleString()}
                   </p>
                 </div>
                 {formData.payment_method === 'partial_loan' && (
@@ -873,6 +884,7 @@ export default function RecordSalesPage() {
                               min="1"
                               value={customer.quantity}
                               onChange={(e) => updateCustomerRow(customer.id, 'quantity', parseInt(e.target.value) || 1)}
+                              onWheel={(e) => e.currentTarget.blur()}
                               className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                             />
                           </td>
@@ -885,6 +897,7 @@ export default function RecordSalesPage() {
                                 min="0"
                                 value={customer.selling_price}
                                 onChange={(e) => updateCustomerRow(customer.id, 'selling_price', parseFloat(e.target.value) || 0)}
+                                onWheel={(e) => e.currentTarget.blur()}
                                 className="pl-5 w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                               />
                             </div>
@@ -910,6 +923,7 @@ export default function RecordSalesPage() {
                                   min="0"
                                   value={customer.payment_value}
                                   onChange={(e) => updateCustomerRow(customer.id, 'payment_value', parseFloat(e.target.value) || 0)}
+                                  onWheel={(e) => e.currentTarget.blur()}
                                   className="pl-5 w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                                 />
                               </div>
@@ -920,7 +934,15 @@ export default function RecordSalesPage() {
                           <td className="border border-gray-200 px-2 py-2">
                             <select
                               value={customer.returned_empty}
-                              onChange={(e) => updateCustomerRow(customer.id, 'returned_empty', e.target.value as any)}
+                              onChange={(e) => {
+  const newValue = e.target.value
+  updateCustomerRow(customer.id, 'returned_empty', newValue)
+  if (newValue === 'yes') {
+    updateCustomerRow(customer.id, 'empty_quantity_not_returned', customer.quantity)
+  } else if (newValue === 'no') {
+    updateCustomerRow(customer.id, 'empty_quantity_not_returned', 0)
+  }
+}}
                               className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                             >
                               <option value="yes">Yes</option>
@@ -928,16 +950,28 @@ export default function RecordSalesPage() {
                             </select>
                           </td>
                           <td className="border border-gray-200 px-2 py-2">
-                            {customer.returned_empty === 'no' ? (
+                            {customer.returned_empty === 'yes' ? (
                               <input
                                 type="number"
                                 min="0"
+                                max={customer.quantity}
                                 value={customer.empty_quantity_not_returned}
                                 onChange={(e) => updateCustomerRow(customer.id, 'empty_quantity_not_returned', parseInt(e.target.value) || 0)}
+                                onWheel={(e) => e.currentTarget.blur()}
                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                placeholder="Returned quantity"
                               />
                             ) : (
-                              <span className="text-gray-400 text-sm">-</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max={customer.quantity}
+                                value={customer.empty_quantity_not_returned}
+                                onChange={(e) => updateCustomerRow(customer.id, 'empty_quantity_not_returned', parseInt(e.target.value) || 0)}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                placeholder="Not returned"
+                              />
                             )}
                           </td>
                           <td className="border border-gray-200 px-2 py-2 text-center">
@@ -960,7 +994,7 @@ export default function RecordSalesPage() {
               {customerBulkSales.length > 0 && (
                 <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
                   <h4 className="text-lg font-semibold text-orange-900 mb-3">Order Summary</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div>
                       <p className="text-sm text-gray-700">Total Customers:</p>
                       <p className="text-xl font-bold text-orange-900">{customerBulkSales.length}</p>
@@ -968,6 +1002,10 @@ export default function RecordSalesPage() {
                     <div>
                       <p className="text-sm text-gray-700">Total Amount:</p>
                       <p className="text-xl font-bold text-orange-900">₱{calculateBulkTotal().toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-700">Total Profit:</p>
+                      <p className="text-xl font-bold text-green-600">₱{calculateBulkProfit().toLocaleString()}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-700">Total Items:</p>

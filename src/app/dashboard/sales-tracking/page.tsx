@@ -1,8 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { FiDownload, FiDollarSign, FiTrendingUp, FiUsers, FiCreditCard } from 'react-icons/fi'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { FiDownload, FiDollarSign, FiTrendingUp, FiUsers, FiCalendar, FiCreditCard } from 'react-icons/fi'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { 
@@ -49,12 +48,37 @@ interface ProfitTracking {
   loan_id: string | null
   customer_name: string
   product_id: string
-  quantity: number
-  base_price: number
-  selling_price: number
   profit_amount: number
   profit_type: string
   created_at: string
+}
+
+// Month options for filtering
+const monthOptions = [
+  { value: '', label: 'All Months' },
+  { value: '1', label: 'January' },
+  { value: '2', label: 'February' },
+  { value: '3', label: 'March' },
+  { value: '4', label: 'April' },
+  { value: '5', label: 'May' },
+  { value: '6', label: 'June' },
+  { value: '7', label: 'July' },
+  { value: '8', label: 'August' },
+  { value: '9', label: 'September' },
+  { value: '10', label: 'October' },
+  { value: '11', label: 'November' },
+  { value: '12', label: 'December' }
+]
+
+// Generate year options (current year and 3 years back)
+const generateYearOptions = () => {
+  const currentYear = new Date().getFullYear()
+  const years = [{ value: '', label: 'All Years' }]
+  for (let i = 0; i < 4; i++) {
+    const year = currentYear - i
+    years.push({ value: year.toString(), label: year.toString() })
+  }
+  return years
 }
 
 interface Product {
@@ -68,6 +92,7 @@ export default function SalesTrackingPage() {
   const [loading, setLoading] = useState(true)
   const [sales, setSales] = useState<DatabaseTransaction[]>([])
   const [profitTracking, setProfitTracking] = useState<ProfitTracking[]>([])
+  const [emptyTanks, setEmptyTanks] = useState<any[]>([])
   const [totalSales, setTotalSales] = useState(0)
   const [totalProfit, setTotalProfit] = useState(0)
   const [activeLoans, setActiveLoans] = useState(0)
@@ -75,11 +100,88 @@ export default function SalesTrackingPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [productSalesData, setProductSalesData] = useState<{product_name: string, sales: number}[]>([])
   const [yearlyData, setYearlyData] = useState<{year: number, sales: number}[]>([])
+  
+  // Filter states
+  const [selectedMonth, setSelectedMonth] = useState('')
+  const [selectedYear, setSelectedYear] = useState('')
+  const [filteredSales, setFilteredSales] = useState<DatabaseTransaction[]>([])
+  const [filteredProfitTracking, setFilteredProfitTracking] = useState<ProfitTracking[]>([])
+  const [filteredEmptyTanks, setFilteredEmptyTanks] = useState<any[]>([])
+  
+  // Filtered summary states
+  const [filteredTotalSales, setFilteredTotalSales] = useState(0)
+  const [filteredTotalProfit, setFilteredTotalProfit] = useState(0)
+  const [filteredActiveLoans, setFilteredActiveLoans] = useState(0)
+  const [filteredCustomersWithLoans, setFilteredCustomersWithLoans] = useState(0)
+  
+  const yearOptions = generateYearOptions()
 
   useEffect(() => {
     fetchSalesData()
     fetchProducts()
   }, [])
+
+  // Filter data when month/year selection changes
+  useEffect(() => {
+    filterData()
+  }, [selectedMonth, selectedYear, sales, profitTracking, emptyTanks])
+
+  const filterData = () => {
+    let filteredSalesData = [...sales]
+    let filteredProfitData = [...profitTracking]
+    let filteredEmptyTanksData = [...emptyTanks]
+
+    // Filter by month and year
+    if (selectedMonth || selectedYear) {
+      filteredSalesData = sales.filter(sale => {
+        const saleDate = new Date(sale.date)
+        const saleMonth = (saleDate.getMonth() + 1).toString()
+        const saleYear = saleDate.getFullYear().toString()
+        
+        const monthMatch = !selectedMonth || saleMonth === selectedMonth
+        const yearMatch = !selectedYear || saleYear === selectedYear
+        
+        return monthMatch && yearMatch
+      })
+
+      filteredProfitData = profitTracking.filter(profit => {
+        const profitDate = new Date(profit.created_at)
+        const profitMonth = (profitDate.getMonth() + 1).toString()
+        const profitYear = profitDate.getFullYear().toString()
+        
+        const monthMatch = !selectedMonth || profitMonth === selectedMonth
+        const yearMatch = !selectedYear || profitYear === selectedYear
+        
+        return monthMatch && yearMatch
+      })
+
+      filteredEmptyTanksData = emptyTanks.filter(tank => {
+        const tankDate = new Date(tank.date)
+        const tankMonth = (tankDate.getMonth() + 1).toString()
+        const tankYear = tankDate.getFullYear().toString()
+        
+        const monthMatch = !selectedMonth || tankMonth === selectedMonth
+        const yearMatch = !selectedYear || tankYear === selectedYear
+        
+        return monthMatch && yearMatch
+      })
+    }
+
+    setFilteredSales(filteredSalesData)
+    setFilteredProfitTracking(filteredProfitData)
+    setFilteredEmptyTanks(filteredEmptyTanksData)
+    
+    // Calculate filtered summary values
+    const filteredSalesTotal = calculateTotalSalesFromTransactions(filteredSalesData)
+    const filteredProfitTotal = calculateTotalProfitFromProfitTracking(filteredProfitData)
+    const filteredLoansTotal = calculateActiveLoansFromDatabase(filteredSalesData)
+    const filteredCustomersTotal = getCustomersWithActiveLoansFromDatabase(filteredSalesData)
+    
+    setFilteredTotalSales(filteredSalesTotal)
+    setFilteredTotalProfit(filteredProfitTotal)
+    setFilteredActiveLoans(filteredLoansTotal)
+    setFilteredCustomersWithLoans(filteredCustomersTotal)
+  }
 
   const fetchSalesData = async () => {
     try {
@@ -100,6 +202,11 @@ export default function SalesTrackingPage() {
       // Fetch profit tracking data
       const { data: profitTrackingData } = await supabase
         .from('profit_tracking')
+        .select('*')
+
+      // Fetch empty tanks unreturned data
+      const { data: emptyTanksData } = await supabase
+        .from('empty_tanks_unreturned')
         .select('*')
 
       // Create loans map
@@ -138,8 +245,9 @@ export default function SalesTrackingPage() {
       const activeLoansTotal = calculateActiveLoansFromDatabase(loansData || [])
       const customersWithActiveLoansCount = getCustomersWithActiveLoansFromDatabase(loansData || [])
 
-      setSales(enrichedTransactions)
+      setSales(transactionsData || [])
       setProfitTracking(profitTrackingData || [])
+      setEmptyTanks(emptyTanksData || [])
       setTotalSales(salesTotal)
       setTotalProfit(profitTotal)
       setActiveLoans(activeLoansTotal)
@@ -192,15 +300,20 @@ export default function SalesTrackingPage() {
       'Transaction Date'
     ]
     
-    const csvData = sales.map(sale => {
+    const csvData = filteredSales.map(sale => {
       // Get profit tracking data for this transaction
-      const transactionProfit = profitTracking.find(pt => pt.transaction_id === sale.id)
+      const transactionProfit = filteredProfitTracking.find(pt => pt.transaction_id === sale.id)
       const loanInfo = sale.loan_info
       
       // Smart empty tank display logic
-      const returnedEmptyTank = sale.returned_empty 
-        ? `YES (${sale.quantity})` 
-        : `NO (${sale.empty_quantity_not_returned || 0})`
+      const unreturnedTank = filteredEmptyTanks?.find((tank: any) => 
+        tank.customer_name === sale.customer_name && 
+        tank.product_id === sale.product_id
+      )
+      
+      const returnedEmptyTank = unreturnedTank 
+        ? `NO (${unreturnedTank.quantity})` 
+        : `YES (${sale.quantity || 0})`
       
       return [
         sale.customer_name,
@@ -220,7 +333,11 @@ export default function SalesTrackingPage() {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `sales-export-${new Date().toISOString().split('T')[0]}.csv`
+    const filterSuffix = (selectedMonth || selectedYear) 
+    ? `-${monthOptions.find(m => m.value === selectedMonth)?.label || 'All'}-${selectedYear || 'AllYears'}`
+    : ''
+  
+  a.download = `sales-export${filterSuffix}-${new Date().toISOString().split('T')[0]}.csv`
     a.click()
     window.URL.revokeObjectURL(url)
   }
@@ -250,6 +367,16 @@ export default function SalesTrackingPage() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 lg:gap-6">
+        {(selectedMonth || selectedYear) && (
+          <div className="col-span-full mb-2">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-center">
+              <FiCalendar className="w-4 h-4 text-blue-600 mr-2" />
+              <span className="text-sm text-blue-800 font-medium">
+                Summary filtered: {monthOptions.find(m => m.value === selectedMonth)?.label || 'All Months'} {selectedYear || 'All Years'}
+              </span>
+            </div>
+          </div>
+        )}
         <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-3 sm:p-4 lg:p-6 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
           <div className="flex items-center justify-between">
             <div className="flex items-center">
@@ -258,7 +385,7 @@ export default function SalesTrackingPage() {
               </div>
               <div className="ml-2 sm:ml-3 lg:ml-4">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Total Sales</p>
-                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">₱{totalSales.toLocaleString()}</p>
+                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">₱{(selectedMonth || selectedYear ? filteredTotalSales : totalSales).toLocaleString()}</p>
               </div>
             </div>
             <div className="p-1 sm:p-2 rounded-lg bg-orange-50 opacity-50">
@@ -275,7 +402,7 @@ export default function SalesTrackingPage() {
               </div>
               <div className="ml-2 sm:ml-3 lg:ml-4">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Total Profit</p>
-                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">₱{totalProfit.toLocaleString()}</p>
+                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">₱{(selectedMonth || selectedYear ? filteredTotalProfit : totalProfit).toLocaleString()}</p>
               </div>
             </div>
             <div className="p-1 sm:p-2 rounded-lg bg-green-50 opacity-50">
@@ -309,7 +436,7 @@ export default function SalesTrackingPage() {
               </div>
               <div className="ml-2 sm:ml-3 lg:ml-4">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Active Loans</p>
-                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">₱{activeLoans.toLocaleString()}</p>
+                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">₱{(selectedMonth || selectedYear ? filteredActiveLoans : activeLoans).toLocaleString()}</p>
               </div>
             </div>
             <div className="p-1 sm:p-2 rounded-lg bg-red-50 opacity-50 group-hover:bg-red-100 transition-colors duration-300">
@@ -326,7 +453,7 @@ export default function SalesTrackingPage() {
               </div>
               <div className="ml-2 sm:ml-3 lg:ml-4">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Customers with Loans</p>
-                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">{customersWithLoans}</p>
+                <p className="text-lg sm:text-xl lg:text-3xl font-bold text-gray-900">{selectedMonth || selectedYear ? filteredCustomersWithLoans : customersWithLoans}</p>
               </div>
             </div>
             <div className="p-1 sm:p-2 rounded-lg bg-purple-50 opacity-50 group-hover:bg-purple-100 transition-colors duration-300">
@@ -336,6 +463,70 @@ export default function SalesTrackingPage() {
         </Link>
       </div>
 
+      {/* Date Filters */}
+      <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mb-6">
+        <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 border-b border-gray-100 bg-gray-50">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 sm:gap-4">
+            <div>
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center">
+                <FiCalendar className="w-5 h-5 mr-2" />
+                Date Filters
+              </h2>
+              <div className="text-xs sm:text-sm text-gray-500">
+                Filter sales by month and year
+              </div>
+            </div>
+            
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+              {/* Month Filter */}
+              <div className="flex flex-col">
+                <label className="text-xs font-medium text-gray-700 mb-1">Month</label>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {monthOptions.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Year Filter */}
+              <div className="flex flex-col">
+                <label className="text-xs font-medium text-gray-700 mb-1">Year</label>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {yearOptions.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Clear Filters Button */}
+              <div className="flex items-end">
+                <button
+                  onClick={() => {
+                    setSelectedMonth('')
+                    setSelectedYear('')
+                  }}
+                  className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors"
+                >
+                  Clear Filters
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Recent Sales with Perfect CSV Export */}
       <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
         <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 border-b border-gray-100 bg-gray-50 relative">
@@ -343,7 +534,12 @@ export default function SalesTrackingPage() {
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-gray-900">Recent Sales</h2>
               <div className="text-xs sm:text-sm text-gray-500">
-                Showing {Math.min(sales.length, 50)} of {sales.length} transactions • 9 key columns
+                Showing {Math.min(filteredSales.length, 50)} of {filteredSales.length} transactions • 9 key columns
+                {(selectedMonth || selectedYear) && (
+                  <span className="ml-2 text-blue-600">
+                    • Filtered: {monthOptions.find(m => m.value === selectedMonth)?.label || 'All Months'} {selectedYear || 'All Years'}
+                  </span>
+                )}
               </div>
             </div>
             
@@ -375,14 +571,19 @@ export default function SalesTrackingPage() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {sales.slice(0, 10).map((sale) => {
-                const transactionProfit = profitTracking.find(pt => pt.transaction_id === sale.id)
+              {filteredSales.slice(0, 10).map((sale) => {
+                const transactionProfit = filteredProfitTracking.find(pt => pt.transaction_id === sale.id)
                 const loanInfo = sale.loan_info
                 
                 // Smart empty tank display logic
-                const returnedEmptyTank = sale.returned_empty 
-                  ? `YES (${sale.quantity})` 
-                  : `NO (${sale.empty_quantity_not_returned || 0})`
+                const unreturnedTank = filteredEmptyTanks?.find((tank: any) => 
+                  tank.customer_name === sale.customer_name && 
+                  tank.product_id === sale.product_id
+                )
+                
+                const returnedEmptyTank = unreturnedTank 
+                  ? `NO (${unreturnedTank.quantity})` 
+                  : `YES (${sale.quantity || 0})`
                 
                 return (
                   <tr key={sale.id} className="hover:bg-gray-50">
