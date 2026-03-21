@@ -9,7 +9,9 @@ import {
   calculateTotalProfitFromProfitTracking,
   calculateActiveLoansFromDatabase,
   getCustomersWithActiveLoansFromDatabase,
-  calculateTransactionProfitFromDatabase
+  calculateTransactionProfitFromDatabase,
+  DatabaseTransaction,
+  ProfitTracking
 } from '@/lib/database-calculations'
 
 interface EmptyTank {
@@ -20,25 +22,10 @@ interface EmptyTank {
   date: string
 }
 
-interface DatabaseTransaction {
-  id: string
-  transaction_type: string
-  customer_name: string
-  product_id: string
-  quantity: number
-  selling_price: number
-  base_price: number
-  payment_method: string
-  payment_value: number
-  remaining_balance: number
-  excess_payment: number
-  date: string
-  returned_empty: boolean
-  empty_quantity_not_returned: number
-  products?: {
-    name: string
-    base_price: number
-  }
+// Extended interface for local use with additional properties
+interface ExtendedDatabaseTransaction extends DatabaseTransaction {
+  returned_empty?: boolean
+  empty_quantity_not_returned?: number
   loan_info?: {
     loan_id: string
     loan_amount: number
@@ -49,24 +36,10 @@ interface DatabaseTransaction {
   }
 }
 
-interface ProfitTracking {
-  id: string
-  transaction_id: string
-  sale_id: string | null
-  loan_id: string | null
-  customer_name: string
-  product_id: string
-  quantity: number
-  base_price: number
-  selling_price: number
-  profit_amount: number
-  profit_type: string
-  created_at: string
-}
 
 export default function SalesTrackingPage() {
   const [loading, setLoading] = useState(true)
-  const [sales, setSales] = useState<DatabaseTransaction[]>([])
+  const [sales, setSales] = useState<ExtendedDatabaseTransaction[]>([])
   const [profitTracking, setProfitTracking] = useState<ProfitTracking[]>([])
   const [emptyTanks, setEmptyTanks] = useState<EmptyTank[]>([])
   const [totalSales, setTotalSales] = useState(0)
@@ -77,7 +50,7 @@ export default function SalesTrackingPage() {
   // Filter states
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [selectedYear, setSelectedYear] = useState<string>('')
-  const [filteredSales, setFilteredSales] = useState<DatabaseTransaction[]>([])
+  const [filteredSales, setFilteredSales] = useState<ExtendedDatabaseTransaction[]>([])
   const [filteredProfitTracking, setFilteredProfitTracking] = useState<ProfitTracking[]>([])
   const [filteredEmptyTanks, setFilteredEmptyTanks] = useState<EmptyTank[]>([])
   
@@ -150,7 +123,7 @@ export default function SalesTrackingPage() {
     setFilteredEmptyTanks(filteredEmptyTanksData)
 
     // Update summary cards with filtered data
-    const salesTotal = calculateTotalSalesFromTransactions(filteredSalesData)
+    const salesTotal = calculateTotalSalesFromTransactions(filteredSalesData as DatabaseTransaction[])
     const profitTotal = calculateTotalProfitFromProfitTracking(filteredProfitTrackingData)
     setTotalSales(salesTotal)
     setTotalProfit(profitTotal)
