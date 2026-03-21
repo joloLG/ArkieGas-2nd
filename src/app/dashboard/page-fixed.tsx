@@ -7,15 +7,13 @@ import {
   FiPackage,
   FiCreditCard,
   FiUsers,
+  FiPlus,
   FiTrendingUp,
   FiArchive,
-  FiUserCheck,
-  FiPlus
+  FiUserCheck
 } from 'react-icons/fi'
 import { supabase } from '@/lib/supabase'
-import {
-  getFinancialSummaryFromDatabase
-} from '@/lib/database-calculations'
+import { generateFinancialSummary } from '@/lib/calculations'
 
 interface DashboardData {
   totalSales: number
@@ -24,16 +22,22 @@ interface DashboardData {
   activeLoans: number
   customersWithLoans: number
   unreturnedTanks: number
+  totalProfit: number
+  totalTransactions: number
+  uniqueCustomers: number
 }
 
-export default function DashboardPage() {
+export default function DashboardPageFixed() {
   const [data, setData] = useState<DashboardData>({
     totalSales: 0,
     totalInventory: 0,
     totalProducts: 0,
     activeLoans: 0,
     customersWithLoans: 0,
-    unreturnedTanks: 0
+    unreturnedTanks: 0,
+    totalProfit: 0,
+    totalTransactions: 0,
+    uniqueCustomers: 0
   })
   const [, setLoading] = useState(true)
 
@@ -48,30 +52,32 @@ export default function DashboardPage() {
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
 
-      // Fetch all necessary data using proper calculation logic
+      // Fetch all necessary data using standardized approach
       const [
-        transactionsData,
-        loansData,
-        profitTrackingData,
-        productsData,
-        unreturnedData
+        transactionsResult,
+        profitResult,
+        loansResult,
+        productsResult,
+        unreturnedResult
       ] = await Promise.all([
-        // Get transactions for sales calculation
+        // Get transactions for current month
         supabase
           .from('transactions')
-          .select('customer_name, payment_value, payment_method, date, products!inner(name)')
+          .select('*')
           .gte('date', startOfMonth.toISOString())
           .lte('date', endOfMonth.toISOString()),
         
-        // Get loans for active loan calculation
-        supabase
-          .from('loans')
-          .select('loan_amount, paid_amount, customer_name'),
-        
-        // Get profit tracking data for accurate profit calculation
+        // Get profit records for current month
         supabase
           .from('profit_tracking')
-          .select('*'),
+          .select('*')
+          .gte('recognized_at', startOfMonth.toISOString())
+          .lte('recognized_at', endOfMonth.toISOString()),
+        
+        // Get all loans for active loan calculation
+        supabase
+          .from('loans')
+          .select('id, loan_amount, paid_amount, customer_name'),
         
         // Get products for inventory
         supabase
@@ -84,26 +90,31 @@ export default function DashboardPage() {
           .select('quantity')
       ])
 
-      // Use standardized calculation functions
-      const transactions = transactionsData || []
-      const loans = loansData || []
-      const profitTracking = profitTrackingData || []
-      const products = productsData || []
-      const unreturned = unreturnedData || []
-
-      const financialSummary = getFinancialSummaryFromDatabase(
-        transactions,
-        loans,
-        profitTracking
+      // Use standardized financial summary calculation
+      const financialSummary = generateFinancialSummary(
+        transactionsResult.data || [],
+        profitResult.data || [],
+        loansResult.data || [],
+        now
       )
+
+      // Calculate inventory totals
+      const totalInventory = productsResult.data?.reduce((sum, product) => sum + product.stocks, 0) || 0
+      const totalProducts = productsResult.data?.length || 0
+
+      // Calculate unreturned tanks
+      const unreturnedTanks = unreturnedResult.data?.reduce((sum, tank) => sum + tank.quantity, 0) || 0
 
       setData({
         totalSales: financialSummary.totalSales,
-        totalInventory: products.reduce((sum, product) => sum + product.stocks, 0),
-        totalProducts: products.length,
+        totalProfit: financialSummary.totalProfit,
+        totalTransactions: financialSummary.totalTransactions,
+        uniqueCustomers: financialSummary.uniqueCustomers,
         activeLoans: financialSummary.activeLoans,
         customersWithLoans: financialSummary.customersWithLoans,
-        unreturnedTanks: unreturned.reduce((sum, tank) => sum + tank.quantity, 0)
+        totalInventory,
+        totalProducts,
+        unreturnedTanks
       })
     } catch (error) {
       console.error('Error fetching dashboard data:', error)
@@ -121,8 +132,15 @@ export default function DashboardPage() {
       bgColor: 'bg-orange-50'
     },
     {
-      title: 'Total Inventory',
-      value: `${data.totalInventory} units`,
+      title: 'Total Profit (This Month)',
+      value: `₱${data.totalProfit.toLocaleString()}`,
+      icon: FiTrendingUp,
+      color: 'text-green-600',
+      bgColor: 'bg-green-50'
+    },
+    {
+      title: 'Total Transactions',
+      value: data.totalTransactions,
       icon: FiPackage,
       color: 'text-blue-600',
       bgColor: 'bg-blue-50'
@@ -149,6 +167,13 @@ export default function DashboardPage() {
       bgColor: 'bg-green-50'
     },
     {
+      title: 'Total Inventory',
+      value: `${data.totalInventory} units`,
+      icon: FiPackage,
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50'
+    },
+    {
       title: 'Unreturned Empty Tanks',
       value: data.unreturnedTanks,
       icon: FiUserCheck,
@@ -167,25 +192,25 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       {/* Header Section */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-8 text-white shadow-xl">
+      <div className="bg-linear-to-r from-blue-600 to-indigo-600 rounded-2xl p-8 text-white shadow-xl">
         <div className="max-w-4xl">
-          <h1 className="text-3xl font-bold mb-2">Main Dashboard</h1>
-          <p className="text-blue-100 text-lg">Overview of your gasul inventory and sales performance</p>
+          <h1 className="text-3xl font-bold mb-2">Main Dashboard (Fixed)</h1>
+          <p className="text-blue-100 text-lg">Overview of your gasul inventory and sales performance with standardized calculations</p>
           <div className="mt-6 flex items-center space-x-4">
             <div className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2">
               <p className="text-sm text-blue-100">Last Updated</p>
               <p className="text-white font-semibold">{new Date().toLocaleDateString()}</p>
             </div>
             <div className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2">
-              <p className="text-sm text-blue-100">Status</p>
-              <p className="text-white font-semibold">System Active</p>
+              <p className="text-sm text-blue-100">Calculation Status</p>
+              <p className="text-white font-semibold">Standardized ✅</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {cards.map((card, index) => (
           <div key={index} className="bg-white rounded-xl shadow-lg border border-gray-100 p-6 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
             <div className="flex items-center justify-between">
@@ -217,7 +242,7 @@ export default function DashboardPage() {
             <Link
               key={index}
               href={shortcut.href}
-              className="group bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-6 hover:from-blue-50 hover:to-indigo-50 transition-all duration-300 border border-gray-200 hover:border-blue-300 hover:shadow-lg transform hover:-translate-y-1"
+              className="group bg-linear-to-br from-gray-50 to-gray-100 rounded-xl p-6 hover:from-blue-50 hover:to-indigo-50 transition-all duration-300 border border-gray-200 hover:border-blue-300 hover:shadow-lg transform hover:-translate-y-1"
             >
               <div className="flex flex-col items-center text-center">
                 <div className={`p-3 rounded-xl bg-white shadow-sm mb-4 group-hover:shadow-md transition-shadow duration-300`}>
@@ -301,6 +326,21 @@ export default function DashboardPage() {
                 Track →
               </Link>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Calculation Method Notice */}
+      <div className="bg-green-50 border border-green-200 rounded-xl p-6">
+        <div className="flex items-center">
+          <div className="p-2 bg-green-100 rounded-lg mr-3">
+            <FiTrendingUp className="w-5 h-5 text-green-600" />
+          </div>
+          <div>
+            <h4 className="text-sm font-semibold text-green-900">Standardized Calculations Active</h4>
+            <p className="text-xs text-green-700 mt-1">
+              This dashboard now uses standardized calculation functions to ensure consistent profit, sales, and loan tracking across the entire system.
+            </p>
           </div>
         </div>
       </div>

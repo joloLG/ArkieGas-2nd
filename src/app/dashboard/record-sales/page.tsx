@@ -80,38 +80,55 @@ export default function RecordSalesPage() {
     setSaving(true)
 
     try {
+      // Calculate profit and payment values
       const profit = (formData.selling_price - selectedProduct.base_price) * formData.quantity
-      let loan_amount = 0
+      let remaining_balance = 0
       let payment_value = 0
+      let excess_payment = 0
 
       if (formData.payment_method === 'partial_loan') {
-        loan_amount = (formData.selling_price * formData.quantity) - formData.payment_value
+        const total_amount = formData.selling_price * formData.quantity
         payment_value = formData.payment_value
+        remaining_balance = total_amount - formData.payment_value
+        
+        // Check for overpayment
+        if (payment_value > total_amount) {
+          excess_payment = payment_value - total_amount
+          remaining_balance = 0
+          payment_value = total_amount
+        }
       } else if (formData.payment_method === 'full_loan') {
-        loan_amount = formData.selling_price * formData.quantity
+        remaining_balance = formData.selling_price * formData.quantity
         payment_value = 0
       } else {
         payment_value = formData.selling_price * formData.quantity
       }
 
-      // Insert sale
-      const { data: saleData, error: saleError } = await supabase
-        .from('sales')
-        .insert({
-          customer_name: formData.customer_name,
-          product_id: selectedProduct.id,
-          quantity: formData.quantity,
-          selling_price: formData.selling_price,
-          payment_method: formData.payment_method,
-          payment_value: payment_value,
-          profit: formData.payment_method === 'cash' ? profit : 0,
-          returned_empty: formData.returned_empty === 'yes',
-          empty_quantity_not_returned: formData.returned_empty === 'no' ? formData.empty_quantity_not_returned : 0
+      // Create transaction record using the new standardized function
+      // This automatically handles profit tracking and loan creation
+      const { data: transactionData, error: transactionError } = await supabase
+        .rpc('create_transaction_v2', {
+          p_transaction_type: 'sale',
+          p_reference_id: null,
+          p_customer_name: formData.customer_name,
+          p_product_id: selectedProduct.id,
+          p_quantity: formData.quantity,
+          p_selling_price: formData.selling_price,
+          p_base_price: selectedProduct.base_price,
+          p_payment_method: formData.payment_method,
+          p_payment_value: payment_value
         })
-        .select()
+
+      if (transactionError) throw transactionError
+
+      // Get the transaction details to check if loan was created
+      const { data: transactionDetails, error: detailsError } = await supabase
+        .from('transactions')
+        .select('reference_id, remaining_balance, excess_payment')
+        .eq('id', transactionData)
         .single()
 
-      if (saleError) throw saleError
+      if (detailsError) throw detailsError
 
       // Update product stocks
       const { error: stockError } = await supabase
@@ -121,23 +138,44 @@ export default function RecordSalesPage() {
 
       if (stockError) throw stockError
 
-      // Handle loans
-      if (formData.payment_method === 'full_loan' || formData.payment_method === 'partial_loan') {
-        const { error: loanError } = await supabase
-          .from('loans')
+      // Handle empty tank returns
+      if (formData.returned_empty === 'yes') {
+        // Customer returned empty tank - update stocks back
+        const { error: returnError } = await supabase
+          .from('products')
+          .update({ stocks: (selectedProduct.stocks - formData.quantity) + formData.quantity })
+          .eq('id', selectedProduct.id)
+
+        if (returnError) throw returnError
+      } else if (formData.returned_empty === 'no' && formData.empty_quantity_not_returned > 0) {
+        // Customer didn't return empty tanks - record it
+        const { error: unreturnedError } = await supabase
+          .from('empty_tanks_unreturned')
           .insert({
             customer_name: formData.customer_name,
             product_id: selectedProduct.id,
-            selling_price: formData.selling_price,
-            base_price: selectedProduct.base_price,
-            loan_amount: loan_amount,
-            paid_amount: 0 // Always start with 0 for new loans
+            quantity: formData.empty_quantity_not_returned,
+            date: new Date().toISOString()
           })
 
-        if (loanError) throw loanError
+        if (unreturnedError) throw unreturnedError
       }
 
-      // Handle empty tanks
+      // Record incoming payment if there's a payment_value (for cash and partial loan payments)
+      if (payment_value > 0) {
+        const { error: paymentError } = await supabase
+          .from('incoming_payments')
+          .insert({
+            transaction_id: transactionData,
+            customer_name: formData.customer_name,
+            payment_amount: payment_value,
+            notes: `Initial payment for ${formData.payment_method}`
+          })
+
+        if (paymentError) throw paymentError
+      }
+
+      // Handle empty tanks - remove from unreturned if customer returned tanks
       if (formData.returned_empty === 'yes') {
         // Remove from unreturned if exists
         const { data: unreturned } = await supabase
@@ -278,21 +316,48 @@ export default function RecordSalesPage() {
     try {
       for (const customer of customerBulkSales) {
         const product = products.find(p => p.id === customer.product_id)!
+        
+        // Calculate profit and payment values
         const profit = (customer.selling_price - product.base_price) * customer.quantity
-        let loan_amount = 0
+        let remaining_balance = 0
         let payment_value = 0
+        let excess_payment = 0
 
         if (customer.payment_method === 'partial_loan') {
-          loan_amount = (customer.selling_price * customer.quantity) - customer.payment_value
+          const total_amount = customer.selling_price * customer.quantity
           payment_value = customer.payment_value
+          remaining_balance = total_amount - customer.payment_value
+          
+          // Check for overpayment
+          if (payment_value > total_amount) {
+            excess_payment = payment_value - total_amount
+            remaining_balance = 0
+            payment_value = total_amount
+          }
         } else if (customer.payment_method === 'full_loan') {
-          loan_amount = customer.selling_price * customer.quantity
+          remaining_balance = customer.selling_price * customer.quantity
           payment_value = 0
         } else {
           payment_value = customer.selling_price * customer.quantity
         }
 
-        // Insert sale
+        // Create transaction record
+        const { data: transactionData, error: transactionError } = await supabase
+          .rpc('create_transaction_v2', {
+            p_transaction_type: 'sale',
+            p_reference_id: null,
+            p_customer_name: customer.customer_name,
+            p_product_id: customer.product_id,
+            p_quantity: customer.quantity,
+            p_selling_price: customer.selling_price,
+            p_base_price: product.base_price,
+            p_payment_method: customer.payment_method,
+            p_payment_value: payment_value
+          })
+
+        if (transactionError) throw transactionError
+
+        // Insert into sales table for backward compatibility
         await supabase
           .from('sales')
           .insert({
@@ -302,7 +367,7 @@ export default function RecordSalesPage() {
             selling_price: customer.selling_price,
             payment_method: customer.payment_method,
             payment_value: payment_value,
-            profit: customer.payment_method === 'cash' ? profit : 0,
+            profit: profit + excess_payment, // Include excess payment in profit
             returned_empty: customer.returned_empty === 'yes',
             empty_quantity_not_returned: customer.returned_empty === 'no' ? customer.empty_quantity_not_returned : 0
           })
@@ -322,8 +387,20 @@ export default function RecordSalesPage() {
               product_id: customer.product_id,
               selling_price: customer.selling_price,
               base_price: product.base_price,
-              loan_amount: loan_amount,
-              paid_amount: 0 // Always start with 0 for new loans
+              loan_amount: remaining_balance,
+              paid_amount: payment_value
+            })
+        }
+
+        // Record incoming payment if there's a payment_value
+        if (payment_value > 0) {
+          await supabase
+            .from('incoming_payments')
+            .insert({
+              transaction_id: transactionData,
+              customer_name: customer.customer_name,
+              payment_amount: payment_value,
+              notes: `Initial payment for ${customer.payment_method}`
             })
         }
 
@@ -375,21 +452,21 @@ export default function RecordSalesPage() {
               })
           }
         } else {
-          // Add to unreturned
-          const { data: existing } = await supabase
+          // Add to unreturned tanks
+          const { data: existingUnreturned } = await supabase
             .from('empty_tanks_unreturned')
             .select('*')
             .eq('customer_name', customer.customer_name)
             .eq('product_id', customer.product_id)
 
-          if (existing && existing.length > 0) {
-            // Update
+          if (existingUnreturned && existingUnreturned.length > 0) {
+            // Update existing quantity
             await supabase
               .from('empty_tanks_unreturned')
-              .update({ quantity: existing[0].quantity + customer.empty_quantity_not_returned })
-              .eq('id', existing[0].id)
+              .update({ quantity: existingUnreturned[0].quantity + customer.empty_quantity_not_returned })
+              .eq('id', existingUnreturned[0].id)
           } else {
-            // Insert
+            // Insert new entry
             await supabase
               .from('empty_tanks_unreturned')
               .insert({
@@ -401,7 +478,7 @@ export default function RecordSalesPage() {
         }
       }
 
-      // Reset form
+      // Reset bulk form
       setCustomerBulkSales([])
       setBulkModalOpen(false)
 

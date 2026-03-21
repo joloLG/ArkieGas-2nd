@@ -57,12 +57,45 @@ CREATE TABLE shop_empty_tanks (
   quantity INTEGER NOT NULL DEFAULT 0
 );
 
+-- Transactions table to track all sales transactions
+CREATE TABLE transactions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  transaction_type TEXT NOT NULL CHECK (transaction_type IN ('sale', 'payment')),
+  reference_id UUID, -- References sale_id for payments, or null for initial sales
+  customer_name TEXT NOT NULL,
+  product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  selling_price DECIMAL(10,2) NOT NULL,
+  base_price DECIMAL(10,2) NOT NULL,
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'full_loan', 'partial_loan')),
+  payment_value DECIMAL(10,2) NOT NULL DEFAULT 0,
+  remaining_balance DECIMAL(10,2) NOT NULL DEFAULT 0,
+  excess_payment DECIMAL(10,2) NOT NULL DEFAULT 0,
+  profit DECIMAL(10,2) NOT NULL DEFAULT 0,
+  date TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Incoming payments table for tracking partial/full loan payments
+CREATE TABLE incoming_payments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  transaction_id UUID REFERENCES transactions(id) ON DELETE CASCADE,
+  customer_name TEXT NOT NULL,
+  payment_amount DECIMAL(10,2) NOT NULL,
+  payment_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  notes TEXT
+);
+
 -- Indexes for performance
 CREATE INDEX idx_sales_date ON sales(date);
 CREATE INDEX idx_sales_customer ON sales(customer_name);
 CREATE INDEX idx_loans_customer ON loans(customer_name);
 CREATE INDEX idx_empty_tanks_customer ON empty_tanks_unreturned(customer_name);
 CREATE INDEX idx_products_name ON products(name);
+CREATE INDEX idx_transactions_date ON transactions(date);
+CREATE INDEX idx_transactions_customer ON transactions(customer_name);
+CREATE INDEX idx_transactions_type ON transactions(transaction_type);
+CREATE INDEX idx_incoming_payments_transaction ON incoming_payments(transaction_id);
+CREATE INDEX idx_incoming_payments_customer ON incoming_payments(customer_name);
 
 -- Row Level Security (RLS)
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
@@ -70,6 +103,8 @@ ALTER TABLE sales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE loans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE empty_tanks_unreturned ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shop_empty_tanks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE incoming_payments ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies (allow authenticated users)
 CREATE POLICY "Allow authenticated users to manage products" ON products
@@ -85,6 +120,12 @@ CREATE POLICY "Allow authenticated users to manage empty_tanks_unreturned" ON em
   FOR ALL USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Allow authenticated users to manage shop_empty_tanks" ON shop_empty_tanks
+  FOR ALL USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to manage transactions" ON transactions
+  FOR ALL USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to manage incoming_payments" ON incoming_payments
   FOR ALL USING (auth.role() = 'authenticated');
 
 -- Function to update updated_at timestamp
@@ -113,6 +154,90 @@ BEGIN
     RETURN total_profit;
   END IF;
   RETURN 0;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to calculate profit for full cash payment
+CREATE OR REPLACE FUNCTION calculate_cash_profit(selling_price DECIMAL, base_price DECIMAL, quantity INTEGER)
+RETURNS DECIMAL AS $$
+BEGIN
+  RETURN (selling_price - base_price) * quantity;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to handle partial payment with excess payment calculation
+CREATE OR REPLACE FUNCTION process_partial_payment(
+  transaction_id UUID,
+  payment_amount DECIMAL,
+  remaining_balance DECIMAL
+)
+RETURNS DECIMAL AS $$
+DECLARE
+  excess_amount DECIMAL := 0;
+  new_remaining_balance DECIMAL := remaining_balance;
+BEGIN
+  -- Calculate new remaining balance
+  new_remaining_balance := remaining_balance - payment_amount;
+  
+  -- Check for overpayment
+  IF new_remaining_balance < 0 THEN
+    excess_amount := ABS(new_remaining_balance);
+    new_remaining_balance := 0;
+  END IF;
+  
+  -- Update the transaction
+  UPDATE transactions 
+  SET 
+    remaining_balance = new_remaining_balance,
+    excess_payment = excess_payment + excess_amount,
+    profit = profit + excess_amount
+  WHERE id = transaction_id;
+  
+  RETURN excess_amount;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to create transaction record
+CREATE OR REPLACE FUNCTION create_transaction(
+  p_transaction_type TEXT,
+  p_reference_id UUID,
+  p_customer_name TEXT,
+  p_product_id UUID,
+  p_quantity INTEGER,
+  p_selling_price DECIMAL,
+  p_base_price DECIMAL,
+  p_payment_method TEXT,
+  p_payment_value DECIMAL
+)
+RETURNS UUID AS $$
+DECLARE
+  transaction_id UUID;
+  calculated_profit DECIMAL := 0;
+  remaining_balance DECIMAL := 0;
+  total_amount DECIMAL := p_selling_price * p_quantity;
+BEGIN
+  -- Calculate profit based on payment method
+  IF p_payment_method = 'cash' THEN
+    calculated_profit := calculate_cash_profit(p_selling_price, p_base_price, p_quantity);
+  ELSIF p_payment_method = 'partial_loan' THEN
+    calculated_profit := calculate_cash_profit(p_selling_price, p_base_price, p_quantity);
+    remaining_balance := total_amount - p_payment_value;
+  ELSIF p_payment_method = 'full_loan' THEN
+    remaining_balance := total_amount;
+  END IF;
+  
+  -- Insert transaction
+  INSERT INTO transactions (
+    transaction_type, reference_id, customer_name, product_id, quantity,
+    selling_price, base_price, payment_method, payment_value,
+    remaining_balance, profit
+  ) VALUES (
+    p_transaction_type, p_reference_id, p_customer_name, p_product_id, p_quantity,
+    p_selling_price, p_base_price, p_payment_method, p_payment_value,
+    remaining_balance, calculated_profit
+  ) RETURNING id INTO transaction_id;
+  
+  RETURN transaction_id;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -153,6 +278,6 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-````123
+
 CREATE TRIGGER low_stock_trigger AFTER UPDATE ON products
   FOR EACH ROW EXECUTE FUNCTION check_low_stock();

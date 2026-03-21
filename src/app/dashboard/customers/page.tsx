@@ -121,52 +121,40 @@ export default function CustomersPage() {
 
     setSaving(true)
     try {
-      const newPaidAmount = paymentModal.loan.paid_amount + paymentModal.amount
-      const remainingLoan = paymentModal.loan.loan_amount - newPaidAmount
+      // Use the new standardized loan payment function
+      const { data: paymentData, error: paymentError } = await supabase
+        .rpc('process_loan_payment_v2', {
+          p_loan_id: paymentModal.loan.id,
+          p_payment_amount: paymentModal.amount,
+          p_payment_notes: `Payment from ${paymentModal.loan.customer_name}`
+        })
 
-      // Update loan
-      const { error: loanError } = await supabase
-        .from('loans')
-        .update({ paid_amount: newPaidAmount })
-        .eq('id', paymentModal.loan.id)
+      if (paymentError) throw paymentError
 
-      if (loanError) throw loanError
+      // Get payment results
+      const paymentResult = paymentData?.[0]
+      if (!paymentResult) throw new Error('Payment processing failed')
 
-      // If fully paid, add profit to sales tracking
-      if (remainingLoan <= 0) {
-        // Find the corresponding sale
+      // Update product stocks if this was the final payment (for full loans)
+      if (paymentResult.is_loan_paid_off) {
+        // Find the original sale to update stocks
         const { data: saleData } = await supabase
-          .from('sales')
-          .select('*')
-          .eq('customer_name', paymentModal.loan.customer_name)
-          .eq('product_id', paymentModal.loan.product_id)
-          .eq('payment_method', 'full_loan')
-          .order('date', { ascending: false })
-          .limit(1)
+          .from('transactions')
+          .select('quantity')
+          .eq('reference_id', paymentModal.loan.id)
+          .eq('transaction_type', 'sale')
+          .single()
 
-        if (saleData && saleData.length > 0) {
-          const profit = (paymentModal.loan.selling_price - paymentModal.loan.base_price) * saleData[0].quantity
-          await supabase
-            .from('sales')
-            .update({ profit })
-            .eq('id', saleData[0].id)
+        if (saleData) {
+          // Update product stocks (customer returns empty tank)
+          const { error: stockError } = await supabase
+            .from('products')
+            .update({ stocks: (await supabase.from('products').select('stocks').eq('id', paymentModal.loan.product_id).single()).data?.stocks + saleData.quantity || 0 })
+            .eq('id', paymentModal.loan.product_id)
+
+          if (stockError) throw stockError
         }
       }
-
-      // Add payment to sales tracking as revenue
-      await supabase
-        .from('sales')
-        .insert({
-          customer_name: paymentModal.loan.customer_name,
-          product_id: paymentModal.loan.product_id,
-          quantity: 0, // payment, not new sale
-          selling_price: 0,
-          payment_method: 'cash', // payment
-          payment_value: paymentModal.amount,
-          profit: remainingLoan <= 0 ? (paymentModal.loan.selling_price - paymentModal.loan.base_price) : 0,
-          returned_empty: false,
-          empty_quantity_not_returned: 0
-        })
 
       setPaymentModal({ loan: null, amount: 0 })
       fetchCustomers()
